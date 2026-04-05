@@ -1,50 +1,115 @@
-# Welcome to your Expo app 👋
+# Real-Time Video Chat Application
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+> ⚠️ This project is currently a work in progress / demo. Some features may be incomplete.
 
-## Get started
+A peer-to-peer real-time video chat application built with **Expo (React Native)**, **WebRTC**, and **Socket.IO**. Supports low-latency streaming under 300ms with a custom Node.js signaling server handling 50+ concurrent connections.
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## ✨ Features
 
-2. Start the app
+- 🎥 Peer-to-peer video streaming with latency under 300ms
+- 🔁 Custom signaling server using Socket.IO rooms
+- 🌐 ICE candidate negotiation with STUN/TURN server support for NAT traversal
+- 📱 Responsive UI built with NativeWind (Tailwind CSS for React Native)
+- 🗂️ File-based routing via Expo Router
+- 🗃️ State management with Context API and Redux store
+- 👥 Supports 50+ concurrent connections
 
-   ```bash
-   npx expo start
-   ```
+---
 
-In the output, you'll find options to open the app in a
+## 🛠️ Tech Stack
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+| Layer | Technology |
+|-------|-----------|
+| Mobile | Expo (React Native) |
+| Routing | Expo Router (file-based) |
+| Styling | NativeWind / Tailwind CSS |
+| Real-time video | WebRTC |
+| Signaling | Socket.IO |
+| Backend | Node.js |
+| State | Context API, Redux (Zustand/store) |
+| Build | EAS Build |
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+---
 
-## Get a fresh project
+## 📁 Project Structure
 
-When you're ready, run:
-
-```bash
-npm run reset-project
+```
+Video-Chatting/
+├── app/              # Expo Router screens (file-based routing)
+├── OtherScreens/     # Additional screen components
+├── assets/           # Images, fonts, static files
+├── context/          # React Context providers
+├── store/            # Redux store
+├── server/           # Node.js + Socket.IO signaling server
+├── app.json          # Expo config
+├── eas.json          # EAS Build config
+└── tailwind.config.js
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## 🚀 Getting Started
 
-## Learn more
+### Prerequisites
 
-To learn more about developing your project with Expo, look at the following resources:
+- Node.js >= 18
+- npm or yarn
+- Expo CLI — `npm install -g expo-cli`
+- EAS CLI — `npm install -g eas-cli`
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### Installation
 
-## Join the community
+```bash
+# Clone the repository
+git clone https://github.com/Parastud/Video-Chatting.git
+cd Video-Chatting
 
-Join our community of developers creating universal apps.
+# Install dependencies
+npm install
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+# Start the app
+npx expo start
+```
+
+### Running the Signaling Server
+
+```bash
+cd server
+npm install
+node index.js
+```
+
+> Update the Socket.IO server URL in the app to your local machine's IP before running.
+
+### STUN/TURN Configuration
+
+In your WebRTC config, set your ICE servers:
+
+```js
+const configuration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    // Add TURN server here if needed for production
+  ],
+};
+```
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a new branch: `git checkout -b feature/your-feature`
+3. Commit your changes: `git commit -m 'Add your feature'`
+4. Push to the branch: `git push origin feature/your-feature`
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is open source and available under the [MIT License](LICENSE).
+
+---
+
+> Built by [Parth Sharma](https://github.com/parastud)
