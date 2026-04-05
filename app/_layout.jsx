@@ -1,19 +1,27 @@
 import { Stack } from "expo-router";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { PeerProvider } from "../context/Peerprovider";
-import { SocketProvider } from "../context/Socketprovider";
-import "../global.css";
+import { StatusBar } from "expo-status-bar";
+import { SocketProvider } from "../context/SocketProvider";
+import { PeerProvider } from "../context/PeerProvider";
+
 export default function RootLayout() {
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SocketProvider>
-        <PeerProvider>
-          <Stack>
-            <Stack.Screen name="index" options={{ headerShown: true, title: "Parastud Rooms", headerTintColor: "white", headerTitleAlign: "center", headerStyle: { backgroundColor: "#1d2429" } }} />
-          </Stack>
-        </PeerProvider>
-      </SocketProvider>
-    </GestureHandlerRootView>
-
-  )
+    <SocketProvider>
+      <PeerProvider>
+        <StatusBar style="light" backgroundColor="#0B0C14" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: "#0B0C14" },
+            animation: "fade_from_bottom",
+          }}
+        >
+          <Stack.Screen name="index" />
+          <Stack.Screen
+            name="Room/[id]"
+            options={{ animation: "slide_from_right" }}
+          />
+        </Stack>
+      </PeerProvider>
+    </SocketProvider>
+  );
 }

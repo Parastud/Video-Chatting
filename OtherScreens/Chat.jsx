@@ -1,56 +1,228 @@
-import { MaterialIcons } from '@expo/vector-icons';
-import { BottomSheetFlatList, BottomSheetTextInput, BottomSheetView } from '@gorhom/bottom-sheet';
-import { useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
-import { useSocket } from '../context/Socketprovider';
-import { UsernameState } from '../store/store';
-const Chat = ({ Msgs }) => {
-    const { getUser } = UsernameState();
-    const socket = useSocket()
-    const HandleMsgSend = () => {
-        if (Msg.trim() === "") return;
-        socket.emit("sendMessage", { roomId: getUser()?.RoomId, message: Msg, Username: getUser()?.Username });
-        setMsg("");
-    };
+import { useCallback, useEffect, useRef, useState } from "react"; // ✅ FIX 13: import useEffect
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { useSocket } from "../context/SocketProvider";
 
-    const HandleChange = (text) => setMsg(text);
-    const [Msg, setMsg] = useState('');
+const formatTime = (ts) => {
+  const d = new Date(ts);
+  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+};
+
+const MessageBubble = ({ item, myName }) => {
+  const isMine = item.Username === myName;
+
+  if (item.type === "join" || item.type === "left") {
     return (
-        <BottomSheetView>
-            <BottomSheetFlatList
-                data={Msgs}
-                keyExtractor={(item, index) => `${item.Username}-${index}`}
-                contentContainerStyle={{ padding: 10 }}
-                inverted
-                scrollEnabled={true}
-                renderItem={({ item }) => (
-                    <View className="p-2 my-1 bg-gray-100 rounded">
-                        {item?.type == "join" &&
-                            <Text>{item.Username} Joined the room</Text>}
-                        {item?.type == "left" &&
-                            <Text>{item.Username} Left the room</Text>}
-                        {item?.type == "msg" &&
-                            <><Text className="font-bold">{item.Username}</Text><Text>{item.message}</Text></>}
-                    </View>
-                )}
-                
+      <View style={styles.systemMsgRow}>
+        <Text style={styles.systemMsg}>
+          {item.Username} {item.type === "join" ? "joined" : "left"} the room
+        </Text>
+      </View>
+    );
+  }
 
-            />
-            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }}>
-                        <BottomSheetTextInput
-                            placeholder='Enter Msg'
-                            value={Msg}
-                            onChangeText={HandleChange}
-                            style={{ flex: 1, backgroundColor: 'gray', padding: 10, borderRadius: 8 }}
-                        />
-                        <TouchableOpacity onPress={HandleMsgSend} style={{ marginLeft: 8 }}>
-                            <MaterialIcons name="send" color="blue" size={24} />
-                        </TouchableOpacity>
-                    </View>
+  return (
+    <View style={[styles.bubbleRow, isMine && styles.bubbleRowMine]}>
+      {!isMine && (
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{item.Username?.[0]?.toUpperCase() ?? "?"}</Text>
+        </View>
+      )}
+      <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
+        {!isMine && <Text style={styles.senderName}>{item.Username}</Text>}
+        <Text style={[styles.msgText, isMine && styles.msgTextMine]}>{item.message}</Text>
+        <Text style={[styles.msgTime, isMine && styles.msgTimeMine]}>
+          {formatTime(item.timestamp || Date.now())}
+        </Text>
+      </View>
+    </View>
+  );
+};
 
+export default function ChatPanel({ roomId, myName, style }) {
+  const { sendMessage, on } = useSocket();
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const listRef = useRef(null);
 
-        </BottomSheetView>
-    )
+  // ✅ FIX 14: Was using useState(() => {...}, []) which is completely wrong —
+  // useState's initializer runs once and returns initial state, it is NOT an effect.
+  // This meant socket listeners were NEVER registered and chat was completely broken.
+  useEffect(() => {
+    const cleanup = on("receiveMessage", (data) => {
+      setMessages((prev) => [...prev, data]);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    const cleanupJoin = on("joined", (data) => {
+      setMessages((prev) => [...prev, { ...data, timestamp: Date.now() }]);
+    });
+    const cleanupLeave = on("leave", (data) => {
+      setMessages((prev) => [...prev, { ...data, timestamp: Date.now() }]);
+    });
+    return () => {
+      cleanup?.();
+      cleanupJoin?.();
+      cleanupLeave?.();
+    };
+  }, []); // ✅ runs once on mount, cleans up on unmount
+
+  const handleSend = useCallback(async () => {
+    const msg = input.trim();
+    if (!msg) return;
+    setInput("");
+    await sendMessage({ roomId, message: msg, Username: myName });
+  }, [input, roomId, myName, sendMessage]);
+
+  return (
+    <KeyboardAvoidingView
+      style={[styles.root, style]}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={80}
+    >
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Chat</Text>
+        <View style={styles.headerBadge}>
+          <Text style={styles.headerBadgeText}>
+            {messages.filter((m) => m.type === "msg").length}
+          </Text>
+        </View>
+      </View>
+
+      <FlatList
+        ref={listRef}
+        data={messages}
+        keyExtractor={(_, i) => String(i)}
+        renderItem={({ item }) => <MessageBubble item={item} myName={myName} />}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>No messages yet</Text>
+            <Text style={styles.emptySubtext}>Say hello!</Text>
+          </View>
+        }
+      />
+
+      <View style={styles.inputRow}>
+        <TextInput
+          style={styles.input}
+          placeholder="Message…"
+          placeholderTextColor="#3D3F52"
+          value={input}
+          onChangeText={setInput}
+          onSubmitEditing={handleSend}
+          returnKeyType="send"
+          blurOnSubmit={false}
+          maxLength={500}
+          multiline
+        />
+        <TouchableOpacity
+          style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
+          onPress={handleSend}
+          disabled={!input.trim()}
+        >
+          <Text style={styles.sendBtnText}>↑</Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
+  );
 }
 
-export default Chat
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: "#0D0E1A" },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1A1B2E",
+  },
+  headerTitle: { fontSize: 15, fontWeight: "700", color: "#E8E8FF" },
+  headerBadge: {
+    backgroundColor: "#5B5FED22",
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  headerBadgeText: { color: "#A5A8FF", fontSize: 11, fontWeight: "700" },
+  list: { padding: 16, gap: 12, flexGrow: 1 },
+  systemMsgRow: { alignItems: "center", marginVertical: 4 },
+  systemMsg: {
+    fontSize: 12,
+    color: "#555875",
+    backgroundColor: "#13141F",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+    overflow: "hidden",
+  },
+  bubbleRow: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  bubbleRowMine: { flexDirection: "row-reverse" },
+  avatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#1E2030",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  avatarText: { fontSize: 11, fontWeight: "700", color: "#A5A8FF" },
+  bubble: { maxWidth: "72%", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
+  bubbleOther: {
+    backgroundColor: "#13141F",
+    borderWidth: 1,
+    borderColor: "#1E2030",
+    borderBottomLeftRadius: 4,
+  },
+  bubbleMine: { backgroundColor: "#5B5FED", borderBottomRightRadius: 4 },
+  senderName: { fontSize: 11, color: "#A5A8FF", fontWeight: "700", marginBottom: 4 },
+  msgText: { fontSize: 14, color: "#9CA3AF", lineHeight: 20 },
+  msgTextMine: { color: "#fff" },
+  msgTime: { fontSize: 10, color: "#555875", marginTop: 4, alignSelf: "flex-end" },
+  msgTimeMine: { color: "#ffffff66" },
+  emptyState: { flex: 1, alignItems: "center", justifyContent: "center", paddingTop: 60 },
+  emptyText: { color: "#555875", fontSize: 14, fontWeight: "600" },
+  emptySubtext: { color: "#3D3F52", fontSize: 12, marginTop: 4 },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 10,
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#1A1B2E",
+    backgroundColor: "#0D0E1A",
+  },
+  input: {
+    flex: 1,
+    backgroundColor: "#13141F",
+    borderWidth: 1,
+    borderColor: "#1E2030",
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#E8E8FF",
+    maxHeight: 100,
+  },
+  sendBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#5B5FED",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sendBtnDisabled: { opacity: 0.4 },
+  sendBtnText: { color: "#fff", fontSize: 18, fontWeight: "700" },
+});
