@@ -8,9 +8,10 @@ export const useSocket = () => {
   const context = useContext(SocketContext);
   return context;
 }
-export const SocketProvider = ({children}) => {
+export const SocketProvider = ({ children }) => {
 
-    const socket = useMemo(() => io(`${process.env.EXPO_PUBLIC_API_URL}:${process.env.EXPO_PUBLIC_API_PORT}`), []);
+  const socket = useMemo(() => io(`${"http://192.168.0.119:8000"}`), []);
+  console.log(socket)
   return (
     <SocketContext.Provider value={socket}>
       {children}

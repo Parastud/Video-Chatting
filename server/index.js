@@ -17,7 +17,8 @@ io.on('connection', (socket) => {
 
     socket.join(RoomId);
     rooms.set(socket.id, { Username, RoomId })
-    io.to(RoomId).emit("joined", { Username, type: "join" })
+    socket.to(RoomId).emit("joined", { Username, type: "join" });
+
     console.log(`${Username} joined room ${RoomId}`);
     return callback({ success: true, roomId: RoomId });
 
@@ -49,6 +50,9 @@ io.on('connection', (socket) => {
     } catch (error) {
       console.log("A User Left")
     }
+  });
+  socket.on('ice-candidate', ({ candidate, room }) => {
+    socket.to(room).emit('ice-candidate', { candidate });
   });
 });
 
