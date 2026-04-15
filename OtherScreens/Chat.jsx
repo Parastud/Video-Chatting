@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"; // ✅ FIX 13: import useEffect
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -47,15 +47,12 @@ const MessageBubble = ({ item, myName }) => {
   );
 };
 
-export default function ChatPanel({ roomId, myName, style }) {
+export default function ChatPanel({ roomId, myName, style, onClose }) {
   const { sendMessage, on } = useSocket();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const listRef = useRef(null);
 
-  // ✅ FIX 14: Was using useState(() => {...}, []) which is completely wrong —
-  // useState's initializer runs once and returns initial state, it is NOT an effect.
-  // This meant socket listeners were NEVER registered and chat was completely broken.
   useEffect(() => {
     const cleanup = on("receiveMessage", (data) => {
       setMessages((prev) => [...prev, data]);
@@ -72,7 +69,7 @@ export default function ChatPanel({ roomId, myName, style }) {
       cleanupJoin?.();
       cleanupLeave?.();
     };
-  }, []); // ✅ runs once on mount, cleans up on unmount
+  }, [on]);
 
   const handleSend = useCallback(async () => {
     const msg = input.trim();
@@ -88,12 +85,19 @@ export default function ChatPanel({ roomId, myName, style }) {
       keyboardVerticalOffset={80}
     >
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Chat</Text>
-        <View style={styles.headerBadge}>
-          <Text style={styles.headerBadgeText}>
-            {messages.filter((m) => m.type === "msg").length}
-          </Text>
+        <View style={styles.headerMain}>
+          <Text style={styles.headerTitle}>Chat</Text>
+          <View style={styles.headerBadge}>
+            <Text style={styles.headerBadgeText}>
+              {messages.filter((m) => m.type === "msg").length}
+            </Text>
+          </View>
         </View>
+        {onClose ? (
+          <TouchableOpacity style={styles.headerClose} onPress={onClose}>
+            <Text style={styles.headerCloseText}>Close</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <FlatList
@@ -141,11 +145,18 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: "#1A1B2E",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  headerMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
   },
   headerTitle: { fontSize: 15, fontWeight: "700", color: "#E8E8FF" },
   headerBadge: {
@@ -155,6 +166,19 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   headerBadgeText: { color: "#A5A8FF", fontSize: 11, fontWeight: "700" },
+  headerClose: {
+    backgroundColor: "#FFFFFF10",
+    borderWidth: 1,
+    borderColor: "#FFFFFF18",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  headerCloseText: {
+    color: "#E8E8FF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
   list: { padding: 16, gap: 12, flexGrow: 1 },
   systemMsgRow: { alignItems: "center", marginVertical: 4 },
   systemMsg: {

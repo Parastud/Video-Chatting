@@ -6,10 +6,9 @@ buildscript {
     mavenCentral()
   }
   dependencies {
-    classpath 'com.android.tools.build:gradle'
-    classpath 'com.facebook.react:react-native-gradle-plugin'
-    classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin'
-    classpath 'com.google.gms:google-services:4.4.2'  // 🔧 Corrected this line
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
   }
 }
 
@@ -24,6 +23,7 @@ def reactNativeAndroidDir = new File(
 allprojects {
   repositories {
     maven {
+      // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
       url(reactNativeAndroidDir)
     }
 

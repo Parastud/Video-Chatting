@@ -43,6 +43,7 @@
           "recordAudioAndroid": true
         }
       ],
+      "expo-notifications",
       "expo-router",
       [
         "expo-splash-screen",
@@ -51,6 +52,16 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-pip",
+        {
+          "icons": [
+            "./assets/images/pip_mute.png",
+            "./assets/images/pip_video.png",
+            "./assets/images/pip_end.png"
+          ]
         }
       ]
     ],
