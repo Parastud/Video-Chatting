@@ -27,8 +27,8 @@
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="com.rtc.parastud"/>
-        <data android:scheme="exp+rtc"/>
+        <data android:scheme="com.parastud.facechat"/>
+        <data android:scheme="exp+facechat"/>
       </intent-filter>
     </activity>
   </application>

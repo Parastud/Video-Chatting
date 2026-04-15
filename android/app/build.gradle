@@ -87,9 +87,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.rtc.parastud'
+    namespace 'com.parastud.facechat'
     defaultConfig {
-        applicationId 'com.rtc.parastud'
+        applicationId 'com.parastud.facechat'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

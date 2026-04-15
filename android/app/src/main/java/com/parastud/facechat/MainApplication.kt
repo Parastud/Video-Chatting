@@ -1,4 +1,4 @@
-package com.rtc.parastud
+package com.parastud.facechat
 
 import android.app.Application
 import android.content.res.Configuration

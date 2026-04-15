@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "rtc",
-    "slug": "rtc",
+    "name": "FaceChat",
+    "slug": "facechat",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "com.rtc.parastud",
+    "scheme": "com.parastud.facechat",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rtc.parastud",
+      "bundleIdentifier": "com.parastud.facechat",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -27,7 +27,7 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.rtc.parastud"
+      "package": "com.parastud.facechat"
     },
     "web": {
       "bundler": "metro",
