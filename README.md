@@ -80,6 +80,7 @@ This is a production-ready React Native video chat application built with Expo, 
 
 1. **Update server configuration**:
 ```bash
+<<<<<<< HEAD
 cd server
 npm install
 # Add .env file
@@ -274,3 +275,82 @@ For issues:
 ## 📄 License
 
 Use this as needed for your project.
+=======
+Video-Chatting/
+├── app/              # Expo Router screens
+├── OtherScreens/     # Additional UI screens
+├── assets/           # Static assets
+├── context/          # Context providers
+├── store/            # Redux store
+├── server/           # Node.js signaling server
+├── app.json          # Expo configuration
+├── eas.json          # EAS build config
+└── tailwind.config.js
+```
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js >= 18
+- npm or yarn
+- Expo CLI — `npm install -g expo-cli`
+- EAS CLI — `npm install -g eas-cli`
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Parastud/Video-Chatting.git
+cd Video-Chatting
+
+# Install dependencies
+npm install
+
+# Start the app
+npx expo start
+```
+
+### Running the Signaling Server
+
+```bash
+cd server
+npm install
+node index.js
+```
+
+> Update the Socket.IO server URL in the app to your local machine's IP before running.
+
+### STUN/TURN Configuration
+
+In your WebRTC config, set your ICE servers:
+
+```js
+const configuration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    // Add TURN server here if needed for production
+  ],
+};
+```
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a new branch: `git checkout -b feature/your-feature`
+3. Commit your changes: `git commit -m 'Add your feature'`
+4. Push to the branch: `git push origin feature/your-feature`
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is open source and available under the [MIT License](LICENSE).
+
+---
+
+> Built by [Parth Sharma](https://github.com/parastud)
+>>>>>>> a16744f327906f624b8bcee7da4087c24514433d
