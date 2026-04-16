@@ -42,6 +42,7 @@
     "react-icons": "^5.5.0",
     "react-native": "0.79.3",
     "react-native-gesture-handler": "~2.24.0",
+    "react-native-incall-manager": "^4.2.1",
     "react-native-reanimated": "~3.17.4",
     "react-native-safe-area-context": "^5.4.0",
     "react-native-screens": "~4.11.1",

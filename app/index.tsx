@@ -62,7 +62,7 @@ export default function HomeScreen() {
     setLoading(true);
     try {
       await joinRoom({ Username: name, RoomId: room });
-      router.push(roomHref(room, name));
+      router.replace(roomHref(room, name));
     } catch (error: unknown) {
       Alert.alert("Could not join", getErrorMessage(error));
     } finally {
@@ -81,7 +81,7 @@ export default function HomeScreen() {
 
     try {
       await joinRoom({ Username: name, RoomId: newRoom });
-      router.push(roomHref(newRoom, name));
+      router.replace(roomHref(newRoom, name));
     } catch (error: unknown) {
       Alert.alert("Could not create room", getErrorMessage(error));
     } finally {

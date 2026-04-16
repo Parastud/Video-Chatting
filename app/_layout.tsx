@@ -1,7 +1,7 @@
 import * as Notifications from "expo-notifications";
-import { Stack, useRouter, type Href } from "expo-router";
+import { Stack, usePathname, useRouter, type Href } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Alert } from "react-native";
 import { Provider } from "react-redux";
 import { AuthProvider, useAuth } from "../context/AuthProvider";
@@ -12,6 +12,7 @@ import { store } from "../store/store";
 type IncomingDirectCallPayload = {
   roomId: string;
   fromUsername?: string;
+  fromUserId?: string;
 };
 
 Notifications.setNotificationHandler({
@@ -26,8 +27,10 @@ Notifications.setNotificationHandler({
 
 function GlobalCallListener() {
   const router = useRouter();
-  const { on } = useSocket();
+  const pathname = usePathname();
+  const { on, declineDirectCall } = useSocket();
   const { user, hydrated } = useAuth();
+  const incomingAlertOpenRef = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -50,7 +53,11 @@ function GlobalCallListener() {
       const call = payload as IncomingDirectCallPayload;
       const roomId = String(call?.roomId || "");
       const fromUsername = call?.fromUsername;
+      const fromUserId = String(call?.fromUserId || "");
       if (!roomId) return;
+      if (incomingAlertOpenRef.current) return;
+
+      incomingAlertOpenRef.current = true;
 
       Notifications.scheduleNotificationAsync({
         content: {
@@ -69,28 +76,61 @@ function GlobalCallListener() {
         "Incoming call",
         `${fromUsername || "Someone"} is calling you`,
         [
-          { text: "Decline", style: "cancel" },
+          {
+            text: "Decline",
+            style: "cancel",
+            onPress: () => {
+              incomingAlertOpenRef.current = false;
+              if (fromUserId) {
+                declineDirectCall({ roomId, fromUserId }).catch(() => {});
+              }
+            },
+          },
           {
             text: "Join",
             onPress: () => {
-              router.push({
+              incomingAlertOpenRef.current = false;
+              const href = {
                 pathname: "/Room/[id]",
                 params: {
                   id: roomId,
                   username: String(user?.username || "User"),
                 },
-              } as Href);
+              } as Href;
+
+              if (pathname.startsWith("/Room/")) {
+                router.replace(href);
+                return;
+              }
+
+              router.replace(href);
             },
           },
-        ]
+        ],
+        {
+          cancelable: true,
+          onDismiss: () => {
+            incomingAlertOpenRef.current = false;
+          },
+        }
       );
+
+    });
+
+    const cleanupStatus = on("direct-call-status", (payload: unknown) => {
+      const status = String((payload as { status?: unknown })?.status || "");
+      const message = String((payload as { message?: unknown })?.message || "");
+      if (!status || !message) return;
+      if (status === "ringing" || status === "accepted") return;
+      Alert.alert("Call update", message);
     });
 
     return () => {
       isMounted = false;
       cleanup?.();
+      cleanupStatus?.();
     };
-  }, [on, router, user?.username]);
+  }, [declineDirectCall, on, pathname, router, user?.username]);
 
   if (!hydrated) {
     return null;
@@ -108,7 +148,7 @@ export default function RootLayout() {
       const username = response.notification.request.content.data?.username;
 
       if (roomId) {
-        router.push({
+        router.replace({
           pathname: "/Room/[id]",
           params: {
             id: String(roomId),

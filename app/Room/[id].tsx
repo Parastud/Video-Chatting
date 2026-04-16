@@ -17,6 +17,7 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
+import InCallManager from "react-native-incall-manager";
 import { RTCView, mediaDevices, type MediaStream } from "react-native-webrtc";
 import { useAuth } from "../../context/AuthProvider";
 import { usePeer } from "../../context/PeerProvider";
@@ -35,6 +36,7 @@ type CtrlBtnProps = {
   label?: string;
   active?: boolean;
   danger?: boolean;
+  disabled?: boolean;
   onPress: () => void;
   size?: number;
 };
@@ -72,18 +74,20 @@ const getUserMediaWithTimeout = async (constraints: Parameters<typeof mediaDevic
   return Promise.race([mediaPromise, timeoutPromise]);
 };
 
-const CtrlBtn = ({ icon, label, active = false, danger = false, onPress, size = 56 }: CtrlBtnProps) => (
+const CtrlBtn = ({ icon, label, active = false, danger = false, disabled = false, onPress, size = 56 }: CtrlBtnProps) => (
   <TouchableOpacity
     onPress={onPress}
+    disabled={disabled}
     style={[
       styles.ctrlBtn,
       { width: size, height: size, borderRadius: size / 2 },
       active && styles.ctrlBtnActive,
       danger && styles.ctrlBtnDanger,
+      disabled && styles.ctrlBtnDisabled,
     ]}
     activeOpacity={0.75}
   >
-    <Text style={[styles.ctrlIcon, typeof icon === "string" && icon.length > 4 && styles.ctrlIconWord, danger && styles.ctrlIconDanger]}>
+    <Text style={[styles.ctrlIcon, typeof icon === "string" && icon.length > 4 && styles.ctrlIconWord, danger && styles.ctrlIconDanger, disabled && styles.ctrlIconDisabled]}>
       {icon}
     </Text>
     {label && <Text style={styles.ctrlLabel}>{label}</Text>}
@@ -112,7 +116,7 @@ export default function RoomScreen() {
   const { id: roomIdParam, username: usernameParam } = useLocalSearchParams<RoomSearchParams>();
   const { isAuthenticated, user } = useAuth();
 
-  const { sendCall, acceptCall, sendIceCandidate, on, sendMediaState, joinRoom, isConnected } = useSocket();
+  const { sendCall, acceptCall, sendIceCandidate, on, sendMediaState, joinRoom, leaveRoom, isConnected } = useSocket();
   const {
     remoteStream,
     callState,
@@ -142,6 +146,8 @@ export default function RoomScreen() {
   const [appState, setAppState] = useState(AppState.currentState);
   const [remoteDisplayName, setRemoteDisplayName] = useState("Guest");
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
+  const [audioRoute, setAudioRoute] = useState<"speaker" | "device">("speaker");
+  const [isLocalPrimary, setIsLocalPrimary] = useState(false);
   const notificationIdRef = useRef<string | null>(null);
   const notificationPermissionCheckedRef = useRef(false);
   const lastAppStateRef = useRef(AppState.currentState);
@@ -169,13 +175,92 @@ export default function RoomScreen() {
   const controlsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOutgoingOfferRef = useRef<boolean>(false);
   const pendingIncomingOfferRef = useRef<{ offer: unknown; fromUsername?: string } | null>(null);
+  const leavingRoomRef = useRef(false);
+  const audioRouteRetryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const roomId = toSingleValue(roomIdParam);
   const routeUsername = toSingleValue(usernameParam);
 
+  const setAudioRouteMode = useCallback((nextRoute: "speaker" | "device") => {
+    audioRouteRetryTimersRef.current.forEach(clearTimeout);
+    audioRouteRetryTimersRef.current = [];
+
+    try {
+      const speakerOn = nextRoute === "speaker";
+      InCallManager.setForceSpeakerphoneOn(speakerOn);
+      InCallManager.setSpeakerphoneOn(speakerOn);
+      setAudioRoute(nextRoute);
+
+      // Some Android devices reset route when WebRTC audio focus changes.
+      // Re-apply speaker/device route shortly after initial set.
+      const retryDelays = [250, 700, 1400];
+      retryDelays.forEach((delay) => {
+        const timer = setTimeout(() => {
+          InCallManager.setForceSpeakerphoneOn(speakerOn);
+          InCallManager.setSpeakerphoneOn(speakerOn);
+        }, delay);
+        audioRouteRetryTimersRef.current.push(timer);
+      });
+    } catch (error: unknown) {
+      console.warn("[Room] Unable to switch audio route:", error instanceof Error ? error.message : error);
+    }
+  }, []);
+
+  const openAudioRoutePicker = useCallback(() => {
+    Alert.alert("Audio output", "Choose where call audio should play", [
+      {
+        text: "Speaker",
+        onPress: () => setAudioRouteMode("speaker"),
+      },
+      {
+        text: "Bluetooth/Device",
+        onPress: () => setAudioRouteMode("device"),
+      },
+      {
+        text: "Cancel",
+        style: "cancel",
+      },
+    ]);
+  }, [setAudioRouteMode]);
+
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    try {
+      InCallManager.start({ media: "video", auto: true });
+      setAudioRouteMode("speaker");
+    } catch (error: unknown) {
+      console.warn("[Room] Failed to initialize call audio manager:", error instanceof Error ? error.message : error);
+    }
+
+    return () => {
+      audioRouteRetryTimersRef.current.forEach(clearTimeout);
+      audioRouteRetryTimersRef.current = [];
+      try {
+        InCallManager.stop();
+      } catch {
+        // noop
+      }
+    };
+  }, [setAudioRouteMode]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (callState !== "connected") return;
+
+    setAudioRouteMode(audioRoute);
+  }, [audioRoute, callState, setAudioRouteMode]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (appState !== "active") return;
+
+    setAudioRouteMode(audioRoute);
+  }, [appState, audioRoute, setAudioRouteMode]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -679,6 +764,17 @@ export default function RoomScreen() {
         Alert.alert("Call ended", `${Username} left the room.`);
         setRemoteDisplayName("Guest");
         setCallStartedAt(null);
+        setIsLocalPrimary(false);
+        resetPeerSession();
+      })
+    );
+
+    registerRoomCleanup(
+      on("call-rejected", () => {
+        Alert.alert("Call declined", "The other person declined the call.");
+        setCallStartedAt(null);
+        setConnectionStatus("disconnected");
+        setIsLocalPrimary(false);
         resetPeerSession();
       })
     );
@@ -817,17 +913,40 @@ export default function RoomScreen() {
   }, [localStream, videoOff, muted, callState, roomId, sendMediaState]);
 
   const handleLeave = useCallback(() => {
+    if (leavingRoomRef.current) {
+      return;
+    }
+
+    leavingRoomRef.current = true;
+
     if (notificationIdRef.current) {
       Notifications.dismissNotificationAsync(notificationIdRef.current).catch(() => {});
       Notifications.cancelScheduledNotificationAsync(notificationIdRef.current).catch(() => {});
       notificationIdRef.current = null;
     }
 
+    if (roomId) {
+      leaveRoom({ room: roomId }).catch(() => {});
+    }
+
     endCall();
     setCallStartedAt(null);
     localStream?.getTracks().forEach((t) => t.stop());
     router.back();
-  }, [endCall, localStream, router]);
+  }, [endCall, leaveRoom, localStream, roomId, router]);
+
+  useEffect(() => {
+    return () => {
+      if (leavingRoomRef.current) {
+        return;
+      }
+
+      leavingRoomRef.current = true;
+      if (roomId) {
+        leaveRoom({ room: roomId }).catch(() => {});
+      }
+    };
+  }, [leaveRoom, roomId]);
 
   const toggleMute = useCallback(() => {
     localStream?.getAudioTracks().forEach((t) => {
@@ -936,10 +1055,31 @@ export default function RoomScreen() {
   const showRemoteVideoOffCard = Boolean(
     callState === "connected" && !remoteMediaState.videoEnabled
   );
-  const showConnectedPreview = Boolean(localStream && callState === "connected");
+  const showConnectedPreview = Boolean(
+    callState === "connected" && (isLocalPrimary ? showRemoteVideo : localStream)
+  );
   const showWaitingPreview = Boolean(localStream && callState !== "connected");
   const remoteStreamUrl = remoteStream?.toURL?.() ?? "";
   const localStreamUrl = localStream?.toURL?.() ?? "";
+  const showMainLocalVideo = Boolean(isLocalPrimary && localStream);
+  const canSwapStreams = Boolean(localStream && (isLocalPrimary || showRemoteVideo));
+
+  useEffect(() => {
+    if (isLocalPrimary && callState === "connected" && !showRemoteVideo) {
+      setIsLocalPrimary(false);
+    }
+  }, [callState, isLocalPrimary, showRemoteVideo]);
+
+  const togglePrimaryFeed = useCallback(() => {
+    if (!localStream) return;
+
+    if (!isLocalPrimary && callState === "connected" && !showRemoteVideo) {
+      Alert.alert("No remote video", "Remote video is not available to swap yet.");
+      return;
+    }
+
+    setIsLocalPrimary((prev) => !prev);
+  }, [callState, isLocalPrimary, localStream, showRemoteVideo]);
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
@@ -1018,7 +1158,32 @@ export default function RoomScreen() {
 
       {/* ── Remote video (full screen) ── */}
       <View style={styles.remoteContainer}>
-        {showRemoteVideo ? (
+        {showMainLocalVideo ? (
+          <>
+            {videoOff ? (
+              <View style={styles.remoteVideoOffCard}>
+                <View style={styles.remoteBackdropGlow} />
+                <View style={styles.remoteInitialsBadge}>
+                  <Text style={styles.remoteInitialsText}>{initials}</Text>
+                </View>
+                <Text style={styles.remoteVideoOffTitle}>{displayName}</Text>
+                <Text style={styles.remoteVideoOffSubtitle}>Your camera is off</Text>
+              </View>
+            ) : (
+              <RTCView
+                streamURL={localStreamUrl}
+                style={styles.remoteVideo}
+                objectFit="cover"
+                mirror={frontCam}
+              />
+            )}
+            <View style={styles.remoteStateIndicators}>
+              <View style={styles.remoteBadge}>
+                <Text style={styles.remoteBadgeText}>You</Text>
+              </View>
+            </View>
+          </>
+        ) : showRemoteVideo ? (
           <>
             <RTCView
               streamURL={remoteStreamUrl}
@@ -1124,7 +1289,17 @@ export default function RoomScreen() {
           ]}
           {...pipPanResponder.panHandlers}
         >
-          {videoOff ? (
+          <TouchableOpacity style={styles.pipSwapBadge} onPress={togglePrimaryFeed} activeOpacity={0.85}>
+            <Text style={styles.pipSwapBadgeText}>Swap</Text>
+          </TouchableOpacity>
+
+          {isLocalPrimary ? (
+            <RTCView
+              streamURL={remoteStreamUrl}
+              style={styles.localVideo}
+              objectFit="cover"
+            />
+          ) : videoOff ? (
             <View style={styles.cameraOffCardCompact}>
               <View style={styles.initialsBadgeSmall}>
                 <Text style={styles.initialsBadgeSmallText}>{initials}</Text>
@@ -1188,12 +1363,30 @@ export default function RoomScreen() {
 
       {/* ── Controls ── */}
       <Animated.View style={[styles.controls, { opacity: controlsProgress, transform: [{ translateY: controlsProgress.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }]} pointerEvents={controlsVisible ? "auto" : "none"}>
-        <CtrlBtn icon={muted ? "Muted" : "Mic"} label="Audio" active={muted} onPress={toggleMute} size={60} />
-        <CtrlBtn icon={videoOff ? "Off" : "Video"} label="Camera" active={videoOff} onPress={toggleVideo} size={60} />
-        <TouchableOpacity style={styles.endBtn} onPress={handleLeave} activeOpacity={0.8}>
-          <Text style={styles.endBtnIcon}>📵</Text>
-        </TouchableOpacity>
-        <CtrlBtn icon="Flip" label="Rotate" onPress={flipCamera} size={60} />
+        <View style={styles.controlsRowPrimary}>
+          <CtrlBtn icon={muted ? "Muted" : "Mic"} label="Audio" active={muted} onPress={toggleMute} size={58} />
+          <CtrlBtn icon={videoOff ? "Off" : "Video"} label="Camera" active={videoOff} onPress={toggleVideo} size={58} />
+          <TouchableOpacity style={styles.endBtn} onPress={handleLeave} activeOpacity={0.8}>
+            <Text style={styles.endBtnIcon}>End</Text>
+          </TouchableOpacity>
+          <CtrlBtn icon="Flip" label="Rotate" onPress={flipCamera} size={58} />
+        </View>
+        <View style={styles.controlsRowSecondary}>
+          <CtrlBtn
+            icon={audioRoute === "speaker" ? "Speaker" : "BT"}
+            label={audioRoute === "speaker" ? "Speaker" : "Device"}
+            onPress={openAudioRoutePicker}
+            active={audioRoute === "speaker"}
+            size={52}
+          />
+          <CtrlBtn
+            icon="Swap"
+            label="Switch"
+            onPress={togglePrimaryFeed}
+            disabled={!canSwapStreams}
+            size={52}
+          />
+        </View>
       </Animated.View>
     </Pressable>
   );
@@ -1830,7 +2023,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    flexDirection: "row",
+    flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
     gap: 10,
@@ -1841,6 +2034,18 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#23415A66",
     zIndex: 20,
+  },
+  controlsRowPrimary: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+  },
+  controlsRowSecondary: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
   },
   controlsHidden: {
     opacity: 0,
@@ -1856,9 +2061,11 @@ const styles = StyleSheet.create({
   },
   ctrlBtnActive: { backgroundColor: "#7DD3FC22", borderColor: "#7DD3FC66" },
   ctrlBtnDanger: { backgroundColor: "#EF444422", borderColor: "#EF444466" },
+  ctrlBtnDisabled: { opacity: 0.45, borderColor: "#FFFFFF18" },
   ctrlIcon: { fontSize: 17, color: "#FFFFFF", fontWeight: "800" },
   ctrlIconWord: { fontSize: 13, letterSpacing: 0.2 },
   ctrlIconDanger: {},
+  ctrlIconDisabled: { color: "#CBD5E1" },
   ctrlLabel: { fontSize: 9, color: "#D7E5F2", marginTop: 2, fontWeight: "700" },
   endBtn: {
     width: 64,
@@ -1873,5 +2080,29 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 10,
   },
-  endBtnIcon: { fontSize: 24 },
+  endBtnIcon: {
+    fontSize: 15,
+    color: "#FFFFFF",
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  pipSwapBadge: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    zIndex: 3,
+    backgroundColor: "#0B132499",
+    borderWidth: 1,
+    borderColor: "#FFFFFF22",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  pipSwapBadgeText: {
+    color: "#E2E8F0",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
 });

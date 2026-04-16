@@ -51,6 +51,8 @@ const UserCard = ({
   showMeta?: boolean;
 }) => {
   const online = item.status === "online";
+  const busy = item.status === "busy";
+  const callable = item.status !== "offline";
 
   return (
     <View style={styles.userCard}>
@@ -60,15 +62,15 @@ const UserCard = ({
 
       <View style={styles.userMain}>
         <Text style={styles.username}>{item.username}</Text>
-        <Text style={[styles.status, online ? styles.statusOnline : styles.statusOffline]}>
-          {online ? "Online" : "Offline"}
+        <Text style={[styles.status, online ? styles.statusOnline : busy ? styles.statusBusy : styles.statusOffline]}>
+          {online ? "Online" : busy ? "Busy" : "Offline"}
         </Text>
         {showMeta ? <Text style={styles.userId}>{item.id}</Text> : null}
       </View>
 
       <TouchableOpacity
-        style={[styles.callButton, !online && styles.callButtonDisabled]}
-        disabled={!online}
+        style={[styles.callButton, !callable && styles.callButtonDisabled]}
+        disabled={!callable}
         onPress={() => onCall(item)}
       >
         <Text style={styles.callButtonText}>Call</Text>
@@ -157,7 +159,7 @@ export default function ContactsScreen() {
         return;
       }
 
-      if (targetUser.status !== "online") {
+      if (targetUser.status === "offline") {
         Alert.alert("User offline", `${targetUser.username} is not available right now.`);
         return;
       }
@@ -182,7 +184,16 @@ export default function ContactsScreen() {
               return;
             }
 
-            router.push(callRoomHref(roomId, currentUser.username, targetUser.id));
+            const callStatus = String((response as { status?: unknown })?.status || "ringing");
+            if (callStatus === "on-hold") {
+              const queuePosition = Number((response as { queuePosition?: unknown })?.queuePosition || 1);
+              Alert.alert(
+                "Call on hold",
+                `${targetUser.username} is busy. Your call is queued at position ${queuePosition}.`
+              );
+            }
+
+            router.replace(callRoomHref(roomId, currentUser.username, targetUser.id));
           },
         },
       ]);
@@ -521,6 +532,9 @@ const styles = StyleSheet.create({
   },
   statusOnline: {
     color: "#15803D",
+  },
+  statusBusy: {
+    color: "#B45309",
   },
   statusOffline: {
     color: "#64748B",

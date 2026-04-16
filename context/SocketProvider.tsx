@@ -26,11 +26,13 @@ type SocketContextValue = {
   socket: Socket | null;
   isConnected: boolean;
   joinRoom: (payload: { Username: string; RoomId: string }) => Promise<JoinRoomAck>;
+  leaveRoom: (payload: { room: string }) => Promise<SocketAck>;
   sendMessage: (payload: { roomId: string; message: string; Username: string }) => Promise<SendMessageAck>;
   sendCall: (payload: { room: string; offer: unknown }) => void;
   acceptCall: (payload: { ans: unknown; room: string }) => void;
   sendIceCandidate: (payload: { candidate: unknown; room: string }) => void;
   rejectCall: (payload: { room: string }) => void;
+  declineDirectCall: (payload: { roomId: string; fromUserId: string }) => Promise<SocketAck>;
   sendMediaState: (payload: { room: string; videoEnabled: boolean; audioEnabled: boolean }) => void;
   callUser: (payload: {
     fromUserId: string;
@@ -222,6 +224,14 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
+  const leaveRoom = useCallback(({ room }: { room: string }) => {
+    return new Promise<SocketAck>((resolve) => {
+      socketRef.current?.emit("leave-room", { room }, (res: SocketAck | undefined) => {
+        resolve(res || { success: false, error: "No leave-room response" });
+      });
+    });
+  }, []);
+
   const sendCall = useCallback(({ room, offer }: { room: string; offer: unknown }) => {
     socketRef.current?.emit("call", { room, offer });
   }, []);
@@ -236,6 +246,14 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
 
   const rejectCall = useCallback(({ room }: { room: string }) => {
     socketRef.current?.emit("reject-call", { room });
+  }, []);
+
+  const declineDirectCall = useCallback(({ roomId, fromUserId }: { roomId: string; fromUserId: string }) => {
+    return new Promise<SocketAck>((resolve) => {
+      socketRef.current?.emit("direct-call-decline", { roomId, fromUserId }, (res: SocketAck | undefined) => {
+        resolve(res || { success: false, error: "No direct-call-decline response" });
+      });
+    });
   }, []);
 
   const sendMediaState = useCallback(({ room, videoEnabled, audioEnabled }: { room: string; videoEnabled: boolean; audioEnabled: boolean }) => {
@@ -302,11 +320,13 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
       socket: socketInstance,
       isConnected,
       joinRoom,
+      leaveRoom,
       sendMessage,
       sendCall,
       acceptCall,
       sendIceCandidate,
       rejectCall,
+      declineDirectCall,
       sendMediaState,
       callUser,
       identifySocket,
@@ -317,11 +337,13 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
       socketInstance,
       isConnected,
       joinRoom,
+      leaveRoom,
       sendMessage,
       sendCall,
       acceptCall,
       sendIceCandidate,
       rejectCall,
+      declineDirectCall,
       sendMediaState,
       callUser,
       identifySocket,
