@@ -1,12 +1,12 @@
 import * as Notifications from "expo-notifications";
 import ExpoPip from "expo-pip";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   Alert,
   Animated,
   AppState,
-  Clipboard,
   Dimensions,
   PanResponder,
   PermissionsAndroid,
@@ -32,7 +32,7 @@ type RoomSearchParams = {
 };
 
 type CtrlBtnProps = {
-  icon: string;
+  icon: ComponentProps<typeof MaterialCommunityIcons>["name"];
   label?: string;
   active?: boolean;
   danger?: boolean;
@@ -87,9 +87,11 @@ const CtrlBtn = ({ icon, label, active = false, danger = false, disabled = false
     ]}
     activeOpacity={0.75}
   >
-    <Text style={[styles.ctrlIcon, typeof icon === "string" && icon.length > 4 && styles.ctrlIconWord, danger && styles.ctrlIconDanger, disabled && styles.ctrlIconDisabled]}>
-      {icon}
-    </Text>
+    <MaterialCommunityIcons
+      name={icon}
+      size={size >= 58 ? 21 : 19}
+      style={[styles.ctrlIcon, danger && styles.ctrlIconDanger, disabled && styles.ctrlIconDisabled]}
+    />
     {label && <Text style={styles.ctrlLabel}>{label}</Text>}
   </TouchableOpacity>
 );
@@ -138,7 +140,6 @@ export default function RoomScreen() {
   const [videoOff, setVideoOff] = useState(false);
   const [frontCam, setFrontCam] = useState(true);
   const [chatOpen, setChatOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState("initializing");
   const [roomJoined, setRoomJoined] = useState(false);
@@ -177,6 +178,8 @@ export default function RoomScreen() {
   const pendingIncomingOfferRef = useRef<{ offer: unknown; fromUsername?: string } | null>(null);
   const leavingRoomRef = useRef(false);
   const audioRouteRetryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const renegotiationAttemptsRef = useRef(0);
+  const renegotiationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const roomId = toSingleValue(roomIdParam);
   const routeUsername = toSingleValue(usernameParam);
@@ -243,7 +246,6 @@ export default function RoomScreen() {
       try {
         InCallManager.stop();
       } catch {
-        // noop
       }
     };
   }, [setAudioRouteMode]);
@@ -323,6 +325,7 @@ export default function RoomScreen() {
   const pipPanResponder = useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: (_, gestureState) =>
           Math.abs(gestureState.dx) > 3 || Math.abs(gestureState.dy) > 3,
         onPanResponderGrant: () => {
@@ -600,6 +603,34 @@ export default function RoomScreen() {
     setConnectionStatus(localStreamRef.current || mediaUnavailable ? "waiting" : "waiting-media");
   }, [endCall, mediaUnavailable]);
 
+  const restartNegotiation = useCallback(async () => {
+    if (!roomId) return;
+
+    if (renegotiationAttemptsRef.current >= 2) {
+      setConnectionStatus("failed");
+      return;
+    }
+
+    renegotiationAttemptsRef.current += 1;
+    console.log("[Room] Restarting negotiation attempt", renegotiationAttemptsRef.current);
+
+    resetPeerSession();
+    const initialized = await initializePeerConnection();
+    if (!initialized) {
+      setConnectionStatus("failed");
+      return;
+    }
+
+    const offer = await createOffer();
+    if (!offer) {
+      setConnectionStatus("failed");
+      return;
+    }
+
+    sendCall({ room: roomId, offer });
+    setConnectionStatus("calling");
+  }, [roomId, resetPeerSession, initializePeerConnection, createOffer, sendCall]);
+
   // ── Socket event listeners ───────────────────────────────────
   useEffect(() => {
     const cleanups: (() => void)[] = [];
@@ -692,6 +723,7 @@ export default function RoomScreen() {
             if (roomId) {
               acceptCall({ ans, room: roomId });
             }
+            renegotiationAttemptsRef.current = 0;
             setCallState("connected");
             setConnectionStatus("connected");
             console.log("[incall] Answer sent, connection status set to connected");
@@ -714,6 +746,7 @@ export default function RoomScreen() {
         try {
           console.log("[accepted] Setting remote description (answer)");
           await acceptAnswer(ans);
+          renegotiationAttemptsRef.current = 0;
           setConnectionStatus("connected");
           console.log("[accepted] Answer accepted, connection status set to connected");
         } catch (error: unknown) {
@@ -727,6 +760,7 @@ export default function RoomScreen() {
       on("call-started", (payload: unknown) => {
         const startedAt = Number((payload as { startedAt?: unknown })?.startedAt || 0);
         if (!startedAt) return;
+        renegotiationAttemptsRef.current = 0;
         setCallStartedAt(startedAt);
         setConnectionStatus("connected");
       })
@@ -781,6 +815,29 @@ export default function RoomScreen() {
 
     return () => cleanups.forEach((fn) => fn?.());
   }, [roomId, on, initializePeerConnection, createOffer, sendCall, createAnswer, acceptCall, setCallState, acceptAnswer, addIceCandidate, resetPeerSession, setRemoteMediaState, user?.username, routeUsername, callState, mediaUnavailable]);
+
+  useEffect(() => {
+    if (renegotiationTimerRef.current) {
+      clearTimeout(renegotiationTimerRef.current);
+      renegotiationTimerRef.current = null;
+    }
+
+    if (!roomJoined || leavingRoomRef.current) return;
+    if (connectionStatus !== "failed" && callState !== "failed") return;
+
+    renegotiationTimerRef.current = setTimeout(() => {
+      restartNegotiation().catch((error: unknown) => {
+        console.error("[Room] Negotiation restart failed:", error);
+      });
+    }, 1200);
+
+    return () => {
+      if (renegotiationTimerRef.current) {
+        clearTimeout(renegotiationTimerRef.current);
+        renegotiationTimerRef.current = null;
+      }
+    };
+  }, [roomJoined, callState, connectionStatus, restartNegotiation]);
 
   // ── Trigger peer init when stream becomes available ──────────
   useEffect(() => {
@@ -897,7 +954,7 @@ export default function RoomScreen() {
         router.back();
       }
     })();
-  }, [isConnected, localStream, mediaUnavailable, roomJoined, roomId, user?.username, routeUsername, joinRoom, router]);
+  }, [isConnected, roomJoined]);
 
   // ── Send media state when it changes ────────────────────────
   useEffect(() => {
@@ -918,6 +975,12 @@ export default function RoomScreen() {
     }
 
     leavingRoomRef.current = true;
+    renegotiationAttemptsRef.current = 0;
+
+    if (renegotiationTimerRef.current) {
+      clearTimeout(renegotiationTimerRef.current);
+      renegotiationTimerRef.current = null;
+    }
 
     if (notificationIdRef.current) {
       Notifications.dismissNotificationAsync(notificationIdRef.current).catch(() => {});
@@ -942,6 +1005,13 @@ export default function RoomScreen() {
       }
 
       leavingRoomRef.current = true;
+      renegotiationAttemptsRef.current = 0;
+
+      if (renegotiationTimerRef.current) {
+        clearTimeout(renegotiationTimerRef.current);
+        renegotiationTimerRef.current = null;
+      }
+
       if (roomId) {
         leaveRoom({ room: roomId }).catch(() => {});
       }
@@ -959,6 +1029,7 @@ export default function RoomScreen() {
     localStream?.getVideoTracks().forEach((t) => {
       t.enabled = videoOff;
     });
+    setIsLocalPrimary(false);
     setVideoOff((v) => !v);
   }, [localStream, videoOff]);
 
@@ -966,13 +1037,6 @@ export default function RoomScreen() {
     localStream?.getVideoTracks().forEach((t) => t._switchCamera?.());
     setFrontCam((f) => !f);
   }, [localStream]);
-
-  const copyRoomId = useCallback(() => {
-    if (!roomId) return;
-    Clipboard.setString(roomId);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [roomId]);
 
   useEffect(() => {
     if (Platform.OS !== "android") return;
@@ -1061,6 +1125,8 @@ export default function RoomScreen() {
   const showWaitingPreview = Boolean(localStream && callState !== "connected");
   const remoteStreamUrl = remoteStream?.toURL?.() ?? "";
   const localStreamUrl = localStream?.toURL?.() ?? "";
+  const localVideoKey = `${localStream?.id ?? "local-none"}-${videoOff ? "off" : "on"}-${frontCam ? "front" : "rear"}`;
+  const remoteVideoKey = `${remoteStream?.id ?? "remote-none"}-${isLocalPrimary ? "pip" : "main"}`;
   const showMainLocalVideo = Boolean(isLocalPrimary && localStream);
   const canSwapStreams = Boolean(localStream && (isLocalPrimary || showRemoteVideo));
 
@@ -1133,7 +1199,7 @@ export default function RoomScreen() {
             <Text style={styles.callTitle} numberOfLines={1}>
               {remoteDisplayName}
             </Text>
-            <Text style={styles.callSubtitle}>Room {roomId}</Text>
+            <Text style={styles.callSubtitle}>Secure peer call</Text>
           </View>
 
           {callState === "connected" ? (
@@ -1146,13 +1212,6 @@ export default function RoomScreen() {
               <Text style={styles.statusPillText}>{getStatusText()}</Text>
             </View>
           )}
-        </View>
-
-        <View style={styles.headerActions}>
-          <TouchableOpacity style={styles.headerChip} onPress={copyRoomId} activeOpacity={0.8}>
-            <Text style={styles.headerChipLabel}>Room code</Text>
-            <Text style={styles.headerChipValue}>{copied ? "Copied" : roomId}</Text>
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -1171,10 +1230,12 @@ export default function RoomScreen() {
               </View>
             ) : (
               <RTCView
+                key={`main-local-${localVideoKey}`}
                 streamURL={localStreamUrl}
                 style={styles.remoteVideo}
                 objectFit="cover"
                 mirror={frontCam}
+                zOrder={0}
               />
             )}
             <View style={styles.remoteStateIndicators}>
@@ -1186,9 +1247,11 @@ export default function RoomScreen() {
         ) : showRemoteVideo ? (
           <>
             <RTCView
+              key={`main-remote-${remoteVideoKey}`}
               streamURL={remoteStreamUrl}
               style={styles.remoteVideo}
               objectFit="cover"
+              zOrder={0}
             />
             {/* Remote media state indicators */}
             <View style={styles.remoteStateIndicators}>
@@ -1254,10 +1317,12 @@ export default function RoomScreen() {
                 ) : (
                   <>
                     <RTCView
+                      key={`waiting-local-${localVideoKey}`}
                       streamURL={localStreamUrl}
                       style={styles.waitingPreviewVideo}
                       objectFit="cover"
                       mirror={frontCam}
+                      zOrder={0}
                     />
                     <View style={styles.waitingPreviewLabel}>
                       <Text style={styles.waitingPreviewLabelText}>Your preview</Text>
@@ -1295,9 +1360,11 @@ export default function RoomScreen() {
 
           {isLocalPrimary ? (
             <RTCView
+              key={`pip-remote-${remoteVideoKey}`}
               streamURL={remoteStreamUrl}
               style={styles.localVideo}
               objectFit="cover"
+              zOrder={2}
             />
           ) : videoOff ? (
             <View style={styles.cameraOffCardCompact}>
@@ -1308,24 +1375,16 @@ export default function RoomScreen() {
             </View>
           ) : (
             <RTCView
+              key={`pip-local-${localVideoKey}`}
               streamURL={localStreamUrl}
               style={styles.localVideo}
               objectFit="cover"
               mirror={frontCam}
+              zOrder={2}
             />
           )}
         </Animated.View>
       )}
-
-      {/* ── Chat launcher ── */}
-      <TouchableOpacity
-        style={[styles.chatLauncher, chatOpen && styles.chatLauncherActive]}
-        onPress={() => setChatOpen((o) => !o)}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.chatLauncherIcon}>{chatOpen ? "Close" : "Chat"}</Text>
-        <Text style={styles.chatLauncherText}>{chatOpen ? "Hide messages" : "Open chat"}</Text>
-      </TouchableOpacity>
 
       <Animated.View
         pointerEvents={chatOpen ? "auto" : "none"}
@@ -1364,26 +1423,33 @@ export default function RoomScreen() {
       {/* ── Controls ── */}
       <Animated.View style={[styles.controls, { opacity: controlsProgress, transform: [{ translateY: controlsProgress.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }]} pointerEvents={controlsVisible ? "auto" : "none"}>
         <View style={styles.controlsRowPrimary}>
-          <CtrlBtn icon={muted ? "Muted" : "Mic"} label="Audio" active={muted} onPress={toggleMute} size={58} />
-          <CtrlBtn icon={videoOff ? "Off" : "Video"} label="Camera" active={videoOff} onPress={toggleVideo} size={58} />
+          <CtrlBtn icon={muted ? "microphone-off" : "microphone"} label="Audio" active={muted} onPress={toggleMute} size={58} />
+          <CtrlBtn icon={videoOff ? "video-off" : "video"} label="Camera" active={videoOff} onPress={toggleVideo} size={58} />
           <TouchableOpacity style={styles.endBtn} onPress={handleLeave} activeOpacity={0.8}>
-            <Text style={styles.endBtnIcon}>End</Text>
+            <MaterialCommunityIcons name="phone-hangup" size={24} color="#FFFFFF" />
           </TouchableOpacity>
-          <CtrlBtn icon="Flip" label="Rotate" onPress={flipCamera} size={58} />
+          <CtrlBtn icon="camera-flip" label="Rotate" onPress={flipCamera} size={58} />
         </View>
         <View style={styles.controlsRowSecondary}>
           <CtrlBtn
-            icon={audioRoute === "speaker" ? "Speaker" : "BT"}
+            icon={audioRoute === "speaker" ? "volume-high" : "bluetooth-audio"}
             label={audioRoute === "speaker" ? "Speaker" : "Device"}
             onPress={openAudioRoutePicker}
             active={audioRoute === "speaker"}
             size={52}
           />
           <CtrlBtn
-            icon="Swap"
+            icon="swap-horizontal"
             label="Switch"
             onPress={togglePrimaryFeed}
             disabled={!canSwapStreams}
+            size={52}
+          />
+          <CtrlBtn
+            icon={chatOpen ? "close" : "chat"}
+            label={chatOpen ? "Hide chat" : "Chat"}
+            onPress={() => setChatOpen((o) => !o)}
+            active={chatOpen}
             size={52}
           />
         </View>
@@ -2062,8 +2128,7 @@ const styles = StyleSheet.create({
   ctrlBtnActive: { backgroundColor: "#7DD3FC22", borderColor: "#7DD3FC66" },
   ctrlBtnDanger: { backgroundColor: "#EF444422", borderColor: "#EF444466" },
   ctrlBtnDisabled: { opacity: 0.45, borderColor: "#FFFFFF18" },
-  ctrlIcon: { fontSize: 17, color: "#FFFFFF", fontWeight: "800" },
-  ctrlIconWord: { fontSize: 13, letterSpacing: 0.2 },
+  ctrlIcon: { color: "#FFFFFF" },
   ctrlIconDanger: {},
   ctrlIconDisabled: { color: "#CBD5E1" },
   ctrlLabel: { fontSize: 9, color: "#D7E5F2", marginTop: 2, fontWeight: "700" },

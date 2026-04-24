@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   MediaStream,
   MediaStreamTrack,
@@ -6,6 +6,8 @@ import {
   RTCPeerConnection,
   RTCSessionDescription,
 } from "react-native-webrtc";
+import { API_URL } from "../app.env";
+import { useAuth } from "./AuthProvider";
 
 type CallState = "idle" | "calling" | "connected" | "failed" | "ended";
 
@@ -67,17 +69,9 @@ type PeerContextValue = {
 
 const PeerContext = createContext<PeerContextValue | null>(null);
 
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
-    { urls: "stun:stun3.l.google.com:19302" },
-  ],
-};
-
 export const PeerProvider = ({ children }: { children: ReactNode }) => {
   const peerRef = useRef<RTCPeerConnection | null>(null);
+  const { isAuthenticated, user: currentUser, token, hydrated } = useAuth();
   const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [callState, setCallState] = useState<CallState>("idle");
@@ -86,13 +80,43 @@ export const PeerProvider = ({ children }: { children: ReactNode }) => {
     audioEnabled: true,
   });
 
+  const iceServersRef = useRef<object[]>([
+    { urls: "stun:stun.l.google.com:19302" }, // fallback while loading
+  ]);
+
+  useEffect(() => {
+    const loadIceServers = async () => {
+      if (!hydrated || !isAuthenticated || !currentUser || !token) {
+        console.warn("[Peer] Auth not ready, skipping ICE server load for now");
+        return;
+      }
+      try {
+        const res = await fetch(`${API_URL}/api/ice-servers`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        const { iceServers } = await res.json();
+        if (Array.isArray(iceServers) && iceServers.length > 0) {
+          iceServersRef.current = iceServers;
+          console.log("[Peer] ICE servers loaded:", iceServers.length);
+        }
+      } catch (err) {
+        console.warn("[Peer] Failed to load ICE servers, using fallback STUN");
+      }
+    };
+    loadIceServers();
+  }, [hydrated, isAuthenticated, currentUser, token]);
+  // ──────
+
   const createPeer = useCallback(() => {
     if (peerRef.current) {
       peerRef.current.close();
       peerRef.current = null;
     }
 
-    const peer = new RTCPeerConnection(ICE_SERVERS);
+    const peer = new RTCPeerConnection({
+      iceServers: iceServersRef.current,
+      iceCandidatePoolSize: 10,
+    });
     const extendedPeer = peer as ExtendedPeer;
 
     // Handle incoming tracks for remote stream
@@ -147,7 +171,6 @@ export const PeerProvider = ({ children }: { children: ReactNode }) => {
     };
 
     peerRef.current = peer;
-    pendingIceCandidatesRef.current = [];
     return peer;
   }, []);
 
@@ -241,6 +264,10 @@ export const PeerProvider = ({ children }: { children: ReactNode }) => {
       console.error("[Peer] No peer available for accepting answer");
       return;
     }
+    if (peer.signalingState === "stable" || peer.signalingState === "closed") {
+      console.warn("[Peer] acceptAnswer ignored — already in state:", peer.signalingState);
+      return;
+    }
     try {
       if (!ans) {
         console.error("[Peer] No answer provided for accepting");
@@ -271,7 +298,14 @@ export const PeerProvider = ({ children }: { children: ReactNode }) => {
 
   const addIceCandidate = useCallback(async (candidate: RTCIceCandidateInit) => {
     const peer = peerRef.current;
-    if (!peer || !candidate) return;
+    if (!candidate) return;
+
+    // Hosted networks can deliver ICE before peer/session setup is complete.
+    // Queue early candidates so they can be flushed after remote description.
+    if (!peer) {
+      pendingIceCandidatesRef.current.push(candidate);
+      return;
+    }
 
     if (!peer.remoteDescription) {
       pendingIceCandidatesRef.current.push(candidate);

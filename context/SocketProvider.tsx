@@ -80,16 +80,20 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
     debugLog("Creating socket", {
       apiUrl: API_URL,
       transports: ["websocket", "polling"],
-      reconnectionAttempts: 5,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
-      timeout: 10000,
+      reconnectionDelayMax: 8000,
+      randomizationFactor: 0.5,
+      timeout: 20000,
     });
 
     const socket = io(API_URL, {
       transports: ["websocket", "polling"],
-      reconnectionAttempts: 5,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
-      timeout: 10000,
+      reconnectionDelayMax: 8000,
+      randomizationFactor: 0.5,
+      timeout: 20000,
     });
 
     socketRef.current = socket;
