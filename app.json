@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "com.parastud.facechat",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.parastud.facechat",
@@ -45,15 +45,6 @@
       ],
       "expo-notifications",
       "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
-        }
-      ],
       [
         "expo-pip",
         {

@@ -1,18 +1,18 @@
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { useAuth } from "../context/AuthProvider";
+import { useCustomAlert } from "../context/AlertProvider";
+import { useAuthSession } from "../src/hooks/useAuthSession";
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -21,7 +21,8 @@ const getErrorMessage = (error: unknown) => {
 
 export default function RegisterScreen() {
   const router = useRouter();
-  const { register, loading, hydrated, isAuthenticated } = useAuth();
+  const { register, loading, hydrated, isAuthenticated } = useAuthSession();
+  const { showAlert } = useCustomAlert();
 
   const [phone, setPhone] = useState("");
   const [username, setUsername] = useState("");
@@ -36,22 +37,22 @@ export default function RegisterScreen() {
 
   const handleRegister = useCallback(async () => {
     if (!phone.trim()) {
-      Alert.alert("Error", "Please enter your phone number");
+      showAlert("Error", "Please enter your phone number");
       return;
     }
 
     if (!username.trim()) {
-      Alert.alert("Error", "Please enter a username");
+      showAlert("Error", "Please enter a username");
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert("Error", "Password must be at least 6 characters");
+      showAlert("Error", "Password must be at least 6 characters");
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert("Error", "Passwords do not match");
+      showAlert("Error", "Passwords do not match");
       return;
     }
 
@@ -59,9 +60,9 @@ export default function RegisterScreen() {
       await register({ phone, username, password });
       router.replace("/");
     } catch (error: unknown) {
-      Alert.alert("Registration failed", getErrorMessage(error));
+      showAlert("Registration failed", getErrorMessage(error));
     }
-  }, [phone, username, password, confirmPassword, register, router]);
+  }, [phone, username, password, confirmPassword, register, router, showAlert]);
 
   if (!hydrated) {
     return <View style={styles.container} />;
@@ -81,18 +82,18 @@ export default function RegisterScreen() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.hero}>
-          <Text style={styles.kicker}>Get started</Text>
+          <Text style={styles.kicker}>JOIN NETWORK</Text>
           <Text style={styles.title}>Create Profile</Text>
-          <Text style={styles.subtitle}>Set up your identity for private video rooms.</Text>
+          <Text style={styles.subtitle}>Set up your identity for secure video rooms.</Text>
         </View>
 
         <View style={styles.panel}>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Phone</Text>
+            <Text style={styles.label}>Phone Number</Text>
             <TextInput
               style={styles.input}
               placeholder="+1 555 000 0000"
-              placeholderTextColor="#8EA0B0"
+              placeholderTextColor="#64748B"
               value={phone}
               onChangeText={setPhone}
               keyboardType="phone-pad"
@@ -104,8 +105,8 @@ export default function RegisterScreen() {
             <Text style={styles.label}>Username</Text>
             <TextInput
               style={styles.input}
-              placeholder="Choose a handle"
-              placeholderTextColor="#8EA0B0"
+              placeholder="Choose a handle (e.g. Alex123)"
+              placeholderTextColor="#64748B"
               value={username}
               onChangeText={setUsername}
               editable={!loading}
@@ -118,7 +119,7 @@ export default function RegisterScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Min 6 chars"
-                placeholderTextColor="#8EA0B0"
+                placeholderTextColor="#64748B"
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry
@@ -131,7 +132,7 @@ export default function RegisterScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="Retype"
-                placeholderTextColor="#8EA0B0"
+                placeholderTextColor="#64748B"
                 value={confirmPassword}
                 onChangeText={setConfirmPassword}
                 secureTextEntry
@@ -146,13 +147,13 @@ export default function RegisterScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#111827" />
+              <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.submitText}>Create account</Text>
+              <Text style={styles.submitText}>Create Account</Text>
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.linkWrap} onPress={() => router.push("/login") }>
+          <TouchableOpacity style={styles.linkWrap} onPress={() => router.push("/login")}>
             <Text style={styles.linkText}>
               Already registered? <Text style={styles.linkAccent}>Sign in</Text>
             </Text>
@@ -166,115 +167,125 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F4F8FF",
+    backgroundColor: "#09090B",
   },
   shapeA: {
     position: "absolute",
-    top: -110,
+    top: -120,
     right: -80,
-    width: 290,
-    height: 290,
-    borderRadius: 145,
-    backgroundColor: "#0EA5E920",
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: "#8B5CF6", // Indigo
+    opacity: 0.15,
   },
   shapeB: {
     position: "absolute",
-    bottom: -140,
-    left: -90,
-    width: 330,
-    height: 330,
-    borderRadius: 165,
-    backgroundColor: "#14B8A61A",
+    bottom: -150,
+    left: -100,
+    width: 380,
+    height: 380,
+    borderRadius: 190,
+    backgroundColor: "#3B82F6", // Blue
+    opacity: 0.15,
   },
   content: {
     flexGrow: 1,
     justifyContent: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 36,
+    paddingHorizontal: 24,
+    paddingVertical: 48,
   },
   hero: {
-    marginBottom: 20,
+    marginBottom: 32,
     alignItems: "center",
   },
   kicker: {
-    color: "#0E7490",
+    color: "#38BDF8", // Sky
     textTransform: "uppercase",
-    letterSpacing: 1.3,
-    fontSize: 12,
-    fontWeight: "700",
+    letterSpacing: 2,
+    fontSize: 11,
+    fontWeight: "800",
     marginBottom: 8,
   },
   title: {
-    fontSize: 40,
-    color: "#14253A",
-    fontFamily: Platform.OS === "ios" ? "Times New Roman" : "serif",
-    marginBottom: 6,
+    fontSize: 42,
+    color: "#F8FAFC",
+    fontFamily: Platform.OS === "ios" ? "Helvetica Neue" : "sans-serif",
+    fontWeight: "800",
+    marginBottom: 8,
+    letterSpacing: -1,
   },
   subtitle: {
-    color: "#54697E",
-    fontSize: 14,
+    color: "#94A3B8",
+    fontSize: 15,
     textAlign: "center",
   },
   panel: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
+    backgroundColor: "rgba(20, 20, 24, 0.6)",
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#D8E4EF",
-    padding: 18,
-    gap: 12,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    padding: 24,
+    gap: 16,
   },
   inputGroup: {
-    gap: 6,
+    gap: 8,
   },
   rowFields: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
   },
   half: {
     flex: 1,
   },
   label: {
     fontSize: 12,
-    color: "#415D77",
+    color: "#94A3B8",
     fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   input: {
-    backgroundColor: "#F7FAFC",
-    borderRadius: 12,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#D8E2EB",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    color: "#15293D",
-    fontSize: 15,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: "#F8FAFC",
+    fontSize: 16,
   },
   submitButton: {
-    marginTop: 8,
-    backgroundColor: "#A7F3D0",
-    borderWidth: 1,
-    borderColor: "#7EE7BD",
-    borderRadius: 12,
-    paddingVertical: 13,
+    marginTop: 12,
+    backgroundColor: "#6366F1", // Indigo
+    shadowColor: "#6366F1",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: "center",
   },
   submitButtonDisabled: {
-    opacity: 0.65,
+    opacity: 0.6,
   },
   submitText: {
-    color: "#0F172A",
+    color: "#FFFFFF",
     fontWeight: "800",
-    fontSize: 15,
+    fontSize: 16,
+    letterSpacing: 0.5,
   },
   linkWrap: {
     alignItems: "center",
-    marginTop: 4,
+    marginTop: 8,
   },
   linkText: {
-    color: "#5F7286",
-    fontSize: 13,
+    color: "#94A3B8",
+    fontSize: 14,
   },
   linkAccent: {
-    color: "#0E7490",
-    fontWeight: "800",
+    color: "#38BDF8",
+    fontWeight: "700",
   },
 });

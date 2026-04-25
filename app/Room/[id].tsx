@@ -1,122 +1,40 @@
-import * as Notifications from "expo-notifications";
-import ExpoPip from "expo-pip";
 import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   Animated,
   AppState,
   Dimensions,
   PanResponder,
-  PermissionsAndroid,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
-  TouchableOpacity,
   View
 } from "react-native";
-import InCallManager from "react-native-incall-manager";
-import { RTCView, mediaDevices, type MediaStream } from "react-native-webrtc";
-import { useAuth } from "../../context/AuthProvider";
+import { type MediaStream } from "react-native-webrtc";
+import { useCustomAlert } from "../../context/AlertProvider";
 import { usePeer } from "../../context/PeerProvider";
 import { useSocket } from "../../context/SocketProvider";
-import ChatPanel from "../../OtherScreens/Chat";
+import { CallControls } from "../../src/components/CallControls";
+import { LocalPip } from "../../src/components/LocalPip";
+import { RemoteStage } from "../../src/components/RemoteStage";
+import { useAuthSession } from "../../src/hooks/useAuthSession";
+import { useCallStatusNotification } from "../../src/hooks/useCallStatusNotification";
+import { useControlsAutoHide } from "../../src/hooks/useControlsAutoHide";
+import { useMediaStateSync } from "../../src/hooks/useMediaStateSync";
+import { usePipLifecycle } from "../../src/hooks/usePipLifecycle";
+import { useRoomAudioRouting } from "../../src/hooks/useRoomAudioRouting";
+import { useServerTimer } from "../../src/hooks/useServerTimer";
+import { styles } from "../../src/styles/roomStyles";
+import type { RoomConnectionStatus, RoomEventPayload, RoomSearchParams } from "../../src/types/room.types";
+import { getConnectionStatusText, getUserMediaWithTimeout, requestMediaPermissions, toSingleValue } from "../../src/utils/room.utils";
 
 const { width: SW, height: SH } = Dimensions.get("window");
-
-type RoomSearchParams = {
-  id?: string | string[];
-  username?: string | string[];
-};
-
-type CtrlBtnProps = {
-  icon: ComponentProps<typeof MaterialCommunityIcons>["name"];
-  label?: string;
-  active?: boolean;
-  danger?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-  size?: number;
-};
-
-type RoomEventPayload = {
-  Username?: string;
-  fromUsername?: string;
-  offer?: unknown;
-  ans?: unknown;
-  candidate?: unknown;
-  videoEnabled?: boolean;
-  audioEnabled?: boolean;
-};
-
-const toSingleValue = (value: string | string[] | undefined) => {
-  if (Array.isArray(value)) return value[0] ?? "";
-  return value ?? "";
-};
-
-const requestMediaPermissions = async () => {
-  if (Platform.OS !== "android") return true;
-
-  const camera = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-  const mic = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
-
-  return camera === PermissionsAndroid.RESULTS.GRANTED && mic === PermissionsAndroid.RESULTS.GRANTED;
-};
-
-const getUserMediaWithTimeout = async (constraints: Parameters<typeof mediaDevices.getUserMedia>[0], timeoutMs: number) => {
-  const mediaPromise = mediaDevices.getUserMedia(constraints);
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error("Timed out while starting camera/microphone")), timeoutMs);
-  });
-
-  return Promise.race([mediaPromise, timeoutPromise]);
-};
-
-const CtrlBtn = ({ icon, label, active = false, danger = false, disabled = false, onPress, size = 56 }: CtrlBtnProps) => (
-  <TouchableOpacity
-    onPress={onPress}
-    disabled={disabled}
-    style={[
-      styles.ctrlBtn,
-      { width: size, height: size, borderRadius: size / 2 },
-      active && styles.ctrlBtnActive,
-      danger && styles.ctrlBtnDanger,
-      disabled && styles.ctrlBtnDisabled,
-    ]}
-    activeOpacity={0.75}
-  >
-    <MaterialCommunityIcons
-      name={icon}
-      size={size >= 58 ? 21 : 19}
-      style={[styles.ctrlIcon, danger && styles.ctrlIconDanger, disabled && styles.ctrlIconDisabled]}
-    />
-    {label && <Text style={styles.ctrlLabel}>{label}</Text>}
-  </TouchableOpacity>
-);
-
-const useServerTimer = (startedAt: number | null) => {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!startedAt) return;
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [startedAt]);
-
-  if (!startedAt) return "00:00";
-
-  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
-  const m = String(Math.floor(elapsed / 60)).padStart(2, "0");
-  const s = String(elapsed % 60).padStart(2, "0");
-  return `${m}:${s}`;
-};
 
 export default function RoomScreen() {
   const router = useRouter();
   const { id: roomIdParam, username: usernameParam } = useLocalSearchParams<RoomSearchParams>();
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user } = useAuthSession();
+  const { showAlert } = useCustomAlert();
 
   const { sendCall, acceptCall, sendIceCandidate, on, sendMediaState, joinRoom, leaveRoom, isConnected } = useSocket();
   const {
@@ -139,20 +57,13 @@ export default function RoomScreen() {
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(false);
   const [frontCam, setFrontCam] = useState(true);
-  const [chatOpen, setChatOpen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState("initializing");
-  const [roomJoined, setRoomJoined] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<RoomConnectionStatus>("initializing");
   const [mediaUnavailable, setMediaUnavailable] = useState(false);
   const [appState, setAppState] = useState(AppState.currentState);
   const [remoteDisplayName, setRemoteDisplayName] = useState("Guest");
   const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
-  const [audioRoute, setAudioRoute] = useState<"speaker" | "device">("speaker");
   const [isLocalPrimary, setIsLocalPrimary] = useState(false);
-  const notificationIdRef = useRef<string | null>(null);
-  const notificationPermissionCheckedRef = useRef(false);
-  const lastAppStateRef = useRef(AppState.currentState);
-  const pipConfiguredRef = useRef(false);
   const pipMargin = 14;
   const pipTop = Platform.OS === "ios" ? 88 : 80;
   const pipWidth = Math.round(SW * 0.24);
@@ -166,103 +77,36 @@ export default function RoomScreen() {
     })
   ).current;
   const pipDragStartRef = useRef({ x: pipMaxX, y: pipTop });
-  const chatSheetProgress = useRef(new Animated.Value(0)).current;
   const controlsProgress = useRef(new Animated.Value(1)).current;
 
   // Refs for stable closure handling
   const localStreamRef = useRef<MediaStream | null>(null);
+  const roomJoinedRef = useRef(false);
   const peerInitializedRef = useRef(false);
-  const iceCandidateHandlerRef = useRef<((candidate: unknown) => void) | null>(null);
-  const controlsHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingOutgoingOfferRef = useRef<boolean>(false);
   const pendingIncomingOfferRef = useRef<{ offer: unknown; fromUsername?: string } | null>(null);
   const leavingRoomRef = useRef(false);
-  const audioRouteRetryTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const renegotiationAttemptsRef = useRef(0);
   const renegotiationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const roomId = toSingleValue(roomIdParam);
   const routeUsername = toSingleValue(usernameParam);
-
-  const setAudioRouteMode = useCallback((nextRoute: "speaker" | "device") => {
-    audioRouteRetryTimersRef.current.forEach(clearTimeout);
-    audioRouteRetryTimersRef.current = [];
-
-    try {
-      const speakerOn = nextRoute === "speaker";
-      InCallManager.setForceSpeakerphoneOn(speakerOn);
-      InCallManager.setSpeakerphoneOn(speakerOn);
-      setAudioRoute(nextRoute);
-
-      // Some Android devices reset route when WebRTC audio focus changes.
-      // Re-apply speaker/device route shortly after initial set.
-      const retryDelays = [250, 700, 1400];
-      retryDelays.forEach((delay) => {
-        const timer = setTimeout(() => {
-          InCallManager.setForceSpeakerphoneOn(speakerOn);
-          InCallManager.setSpeakerphoneOn(speakerOn);
-        }, delay);
-        audioRouteRetryTimersRef.current.push(timer);
-      });
-    } catch (error: unknown) {
-      console.warn("[Room] Unable to switch audio route:", error instanceof Error ? error.message : error);
-    }
-  }, []);
-
-  const openAudioRoutePicker = useCallback(() => {
-    Alert.alert("Audio output", "Choose where call audio should play", [
-      {
-        text: "Speaker",
-        onPress: () => setAudioRouteMode("speaker"),
-      },
-      {
-        text: "Bluetooth/Device",
-        onPress: () => setAudioRouteMode("device"),
-      },
-      {
-        text: "Cancel",
-        style: "cancel",
-      },
-    ]);
-  }, [setAudioRouteMode]);
+  const displayName = String(user?.username || routeUsername || "User");
+  const { clearCallNotification } = useCallStatusNotification({
+    appState,
+    callState,
+    displayName,
+    roomId,
+  });
+  const { audioRoute, openAudioRoutePicker } = useRoomAudioRouting({
+    appState,
+    callState,
+    showAlert,
+  });
 
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
-
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-
-    try {
-      InCallManager.start({ media: "video", auto: true });
-      setAudioRouteMode("speaker");
-    } catch (error: unknown) {
-      console.warn("[Room] Failed to initialize call audio manager:", error instanceof Error ? error.message : error);
-    }
-
-    return () => {
-      audioRouteRetryTimersRef.current.forEach(clearTimeout);
-      audioRouteRetryTimersRef.current = [];
-      try {
-        InCallManager.stop();
-      } catch {
-      }
-    };
-  }, [setAudioRouteMode]);
-
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    if (callState !== "connected") return;
-
-    setAudioRouteMode(audioRoute);
-  }, [audioRoute, callState, setAudioRouteMode]);
-
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    if (appState !== "active") return;
-
-    setAudioRouteMode(audioRoute);
-  }, [appState, audioRoute, setAudioRouteMode]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -272,7 +116,6 @@ export default function RoomScreen() {
     return () => subscription.remove();
   }, []);
 
-  const displayName = String(user?.username || routeUsername || "User");
   const initials =
     displayName
       .split(/\s+/)
@@ -352,133 +195,7 @@ export default function RoomScreen() {
     [clamp, pipMargin, pipMaxX, pipMaxY, pipPosition, pipTop, snapPipToNearestCorner]
   );
 
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    if (callState !== "connected") return;
-
-    (async () => {
-      try {
-        const available = await ExpoPip.isAvailable();
-        if (!available) return;
-
-        await ExpoPip.setPictureInPictureParams({
-          width: 202,
-          height: 360,
-          title: "Call in progress",
-          subtitle: String(displayName || "Video call"),
-          seamlessResizeEnabled: true,
-          autoEnterEnabled: true,
-          actions: [
-            {
-              iconName: "pip_mute",
-              action: "pip-toggle-mute",
-              title: muted ? "Unmute" : "Mute",
-              description: "Toggle microphone",
-            },
-            {
-              iconName: "pip_video",
-              action: "pip-toggle-video",
-              title: videoOff ? "Start video" : "Stop video",
-              description: "Toggle camera",
-            },
-            {
-              iconName: "pip_end",
-              action: "pip-end-call",
-              title: "End call",
-              description: "Hang up the call",
-            },
-          ],
-        });
-        pipConfiguredRef.current = true;
-      } catch (error: unknown) {
-        console.warn("[Room] PiP setup failed:", error instanceof Error ? error.message : error);
-      }
-    })();
-  }, [displayName, muted, videoOff, callState]);
-
-  useEffect(() => {
-    const previous = lastAppStateRef.current;
-    lastAppStateRef.current = appState;
-
-    if (Platform.OS !== "android") return;
-    if (callState !== "connected") return;
-    if (previous === "active" && appState !== "active") {
-      (async () => {
-        try {
-          const available = await ExpoPip.isAvailable();
-          if (!available) return;
-          if (!pipConfiguredRef.current) {
-            await ExpoPip.setPictureInPictureParams({
-              width: 202,
-              height: 360,
-              title: "Call in progress",
-              subtitle: String(displayName || "Video call"),
-              autoEnterEnabled: true,
-            });
-            pipConfiguredRef.current = true;
-          }
-          await ExpoPip.enterPipMode({ width: 202, height: 360 });
-        } catch (error: unknown) {
-          console.warn("[Room] PiP enter failed:", error instanceof Error ? error.message : error);
-        }
-      })();
-    }
-  }, [appState, callState, displayName]);
-
   const timerLabel = useServerTimer(callStartedAt);
-
-  useEffect(() => {
-    if (callState !== "connected") {
-      if (notificationIdRef.current) {
-        Notifications.dismissNotificationAsync(notificationIdRef.current).catch(() => {});
-        Notifications.cancelScheduledNotificationAsync(notificationIdRef.current).catch(() => {});
-        notificationIdRef.current = null;
-      }
-      return;
-    }
-
-    const backgrounded = appState !== "active";
-
-    (async () => {
-      if (!notificationPermissionCheckedRef.current) {
-        const permission = await Notifications.getPermissionsAsync();
-        if (!permission.granted) {
-          const requested = await Notifications.requestPermissionsAsync();
-          if (!requested.granted) {
-            notificationPermissionCheckedRef.current = true;
-            return;
-          }
-        }
-
-        notificationPermissionCheckedRef.current = true;
-      }
-
-      if (backgrounded) {
-        await Notifications.setNotificationChannelAsync("call-status", {
-          name: "Call status",
-          importance: Notifications.AndroidImportance.HIGH,
-          vibrationPattern: [0, 250, 250, 250],
-          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-        });
-
-        if (!notificationIdRef.current) {
-          notificationIdRef.current = await Notifications.scheduleNotificationAsync({
-            content: {
-              title: "Call in progress",
-              body: `${displayName} in room ${roomId}`,
-              sound: "default",
-              data: { roomId, username: displayName },
-            },
-            trigger: null,
-          });
-        }
-      } else if (notificationIdRef.current) {
-        await Notifications.dismissNotificationAsync(notificationIdRef.current).catch(() => {});
-        await Notifications.cancelScheduledNotificationAsync(notificationIdRef.current).catch(() => {});
-        notificationIdRef.current = null;
-      }
-    })();
-  }, [appState, callState, displayName, roomId]);
 
   // ── Start local media ────────────────────────────────────────
   useEffect(() => {
@@ -500,7 +217,7 @@ export default function RoomScreen() {
           stream = await getUserMediaWithTimeout({ audio: true, video: false }, 8000);
           if (!cancelled) {
             setVideoOff(true);
-            Alert.alert("Camera unavailable", "Connected with audio-only mode.");
+            showAlert("Camera unavailable", "Connected with audio-only mode.");
           }
         }
 
@@ -520,7 +237,7 @@ export default function RoomScreen() {
       } catch (error: unknown) {
         console.error("[Room] Camera/Mic Error:", error);
         if (!cancelled) {
-          Alert.alert(
+          showAlert(
             "Camera/Mic Error",
             "Unable to start local media. Continuing in receive-only mode."
           );
@@ -541,7 +258,7 @@ export default function RoomScreen() {
       clearTimeout(watchdog);
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, []);
+  }, [showAlert]);
 
   // ── Initialize Peer Connection ────────────────────────────────
   const initializePeerConnection = useCallback(async () => {
@@ -578,13 +295,12 @@ export default function RoomScreen() {
       }
 
       // Set up ICE candidate handler
-      iceCandidateHandlerRef.current = (c: unknown) => {
+      setOnIceCandidate((c: unknown) => {
         console.log("[Room] Sending ICE candidate to remote peer");
         if (roomId) {
           sendIceCandidate({ candidate: c, room: roomId });
         }
-      };
-      setOnIceCandidate(iceCandidateHandlerRef.current);
+      });
       console.log("[Room] ICE candidate handler set up");
 
       setConnectionStatus(stream ? "peer-ready" : "peer-ready-no-media");
@@ -795,7 +511,7 @@ export default function RoomScreen() {
     registerRoomCleanup(
       on("leave", (payload: unknown) => {
         const { Username } = payload as RoomEventPayload;
-        Alert.alert("Call ended", `${Username} left the room.`);
+        showAlert("Call ended", `${Username} left the room.`);
         setRemoteDisplayName("Guest");
         setCallStartedAt(null);
         setIsLocalPrimary(false);
@@ -805,7 +521,7 @@ export default function RoomScreen() {
 
     registerRoomCleanup(
       on("call-rejected", () => {
-        Alert.alert("Call declined", "The other person declined the call.");
+        showAlert("Call declined", "The other person declined the call.");
         setCallStartedAt(null);
         setConnectionStatus("disconnected");
         setIsLocalPrimary(false);
@@ -814,7 +530,7 @@ export default function RoomScreen() {
     );
 
     return () => cleanups.forEach((fn) => fn?.());
-  }, [roomId, on, initializePeerConnection, createOffer, sendCall, createAnswer, acceptCall, setCallState, acceptAnswer, addIceCandidate, resetPeerSession, setRemoteMediaState, user?.username, routeUsername, callState, mediaUnavailable]);
+  }, [roomId, on, initializePeerConnection, createOffer, sendCall, createAnswer, acceptCall, setCallState, acceptAnswer, addIceCandidate, resetPeerSession, setRemoteMediaState, callState, mediaUnavailable, showAlert]);
 
   useEffect(() => {
     if (renegotiationTimerRef.current) {
@@ -822,7 +538,7 @@ export default function RoomScreen() {
       renegotiationTimerRef.current = null;
     }
 
-    if (!roomJoined || leavingRoomRef.current) return;
+    if (!roomJoinedRef.current || leavingRoomRef.current) return;
     if (connectionStatus !== "failed" && callState !== "failed") return;
 
     renegotiationTimerRef.current = setTimeout(() => {
@@ -837,7 +553,7 @@ export default function RoomScreen() {
         renegotiationTimerRef.current = null;
       }
     };
-  }, [roomJoined, callState, connectionStatus, restartNegotiation]);
+  }, [callState, connectionStatus, restartNegotiation]);
 
   // ── Trigger peer init when stream becomes available ──────────
   useEffect(() => {
@@ -935,7 +651,7 @@ export default function RoomScreen() {
       return;
     }
 
-    if (roomJoined) {
+    if (roomJoinedRef.current) {
       console.log("[Room] Already joined room");
       return;
     }
@@ -945,29 +661,20 @@ export default function RoomScreen() {
         const name = user?.username || routeUsername;
         console.log("[Room] Socket ready, joining room:", roomId, "as", name);
         await joinRoom({ Username: name, RoomId: roomId });
-        setRoomJoined(true);
+        roomJoinedRef.current = true;
         setConnectionStatus(localStream || mediaUnavailable ? "waiting" : "waiting-media");
         console.log("[Room] Successfully joined room");
       } catch (error: unknown) {
         console.error("[Room] Failed to join room:", error);
-        Alert.alert("Failed to join room", error instanceof Error ? error.message : "Unable to join room");
-        router.back();
+        showAlert("Failed to join room", error instanceof Error ? error.message : "Unable to join room");
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace("/");
+        }
       }
     })();
-  }, [isConnected, roomJoined]);
-
-  // ── Send media state when it changes ────────────────────────
-  useEffect(() => {
-    if (callState === "connected") {
-      if (roomId) {
-        sendMediaState({
-          room: roomId,
-          videoEnabled: Boolean(localStream) && !videoOff,
-          audioEnabled: Boolean(localStream) && !muted,
-        });
-      }
-    }
-  }, [localStream, videoOff, muted, callState, roomId, sendMediaState]);
+  }, [isConnected, roomId, joinRoom, localStream, mediaUnavailable, routeUsername, router, showAlert, user?.username]);
 
   const handleLeave = useCallback(() => {
     if (leavingRoomRef.current) {
@@ -982,21 +689,21 @@ export default function RoomScreen() {
       renegotiationTimerRef.current = null;
     }
 
-    if (notificationIdRef.current) {
-      Notifications.dismissNotificationAsync(notificationIdRef.current).catch(() => {});
-      Notifications.cancelScheduledNotificationAsync(notificationIdRef.current).catch(() => {});
-      notificationIdRef.current = null;
-    }
+    clearCallNotification().catch(() => { });
 
     if (roomId) {
-      leaveRoom({ room: roomId }).catch(() => {});
+      leaveRoom({ room: roomId }).catch(() => { });
     }
 
     endCall();
     setCallStartedAt(null);
     localStream?.getTracks().forEach((t) => t.stop());
-    router.back();
-  }, [endCall, leaveRoom, localStream, roomId, router]);
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace("/");
+    }
+  }, [clearCallNotification, endCall, leaveRoom, localStream, roomId, router]);
 
   useEffect(() => {
     return () => {
@@ -1013,7 +720,7 @@ export default function RoomScreen() {
       }
 
       if (roomId) {
-        leaveRoom({ room: roomId }).catch(() => {});
+        leaveRoom({ room: roomId }).catch(() => { });
       }
     };
   }, [leaveRoom, roomId]);
@@ -1038,56 +745,7 @@ export default function RoomScreen() {
     setFrontCam((f) => !f);
   }, [localStream]);
 
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-
-    const subscription = ExpoPip.addEventListener("onPipActionPressed", (event) => {
-      switch (event.action) {
-        case "pip-toggle-mute":
-          toggleMute();
-          break;
-        case "pip-toggle-video":
-          toggleVideo();
-          break;
-        case "pip-end-call":
-          handleLeave();
-          break;
-        default:
-          break;
-      }
-    });
-
-    return () => subscription.remove();
-  }, [handleLeave, toggleMute, toggleVideo]);
-
-  const getStatusText = () => {
-    switch (connectionStatus) {
-      case "initializing":
-        return "Initializing...";
-      case "waiting-media":
-        return "Waiting for camera/microphone...";
-      case "ready":
-        return "Connecting to room...";
-      case "waiting":
-        return "Waiting for someone to join";
-      case "peer-ready":
-        return "Ready to connect";
-      case "peer-ready-no-media":
-        return "Ready (receive-only)";
-      case "calling":
-        return "Calling...";
-      case "no-media":
-        return "No local media, receive-only mode";
-      case "connected":
-        return null;
-      case "disconnected":
-        return "Disconnected";
-      case "failed":
-        return "Connection failed";
-      default:
-        return callState === "calling" ? "Calling…" : "Waiting for someone to join";
-    }
-  };
+  const statusText = getConnectionStatusText(connectionStatus, callState);
 
   const showRemoteVideo = Boolean(
     (() => {
@@ -1122,13 +780,11 @@ export default function RoomScreen() {
   const showConnectedPreview = Boolean(
     callState === "connected" && (isLocalPrimary ? showRemoteVideo : localStream)
   );
-  const showWaitingPreview = Boolean(localStream && callState !== "connected");
   const remoteStreamUrl = remoteStream?.toURL?.() ?? "";
   const localStreamUrl = localStream?.toURL?.() ?? "";
   const localVideoKey = `${localStream?.id ?? "local-none"}-${videoOff ? "off" : "on"}-${frontCam ? "front" : "rear"}`;
   const remoteVideoKey = `${remoteStream?.id ?? "remote-none"}-${isLocalPrimary ? "pip" : "main"}`;
   const showMainLocalVideo = Boolean(isLocalPrimary && localStream);
-  const canSwapStreams = Boolean(localStream && (isLocalPrimary || showRemoteVideo));
 
   useEffect(() => {
     if (isLocalPrimary && callState === "connected" && !showRemoteVideo) {
@@ -1140,48 +796,29 @@ export default function RoomScreen() {
     if (!localStream) return;
 
     if (!isLocalPrimary && callState === "connected" && !showRemoteVideo) {
-      Alert.alert("No remote video", "Remote video is not available to swap yet.");
+      showAlert("No remote video", "Remote video is not available to swap yet.");
       return;
     }
 
     setIsLocalPrimary((prev) => !prev);
-  }, [callState, isLocalPrimary, localStream, showRemoteVideo]);
+  }, [callState, isLocalPrimary, localStream, showRemoteVideo, showAlert]);
 
   const showControls = useCallback(() => {
     setControlsVisible(true);
   }, []);
 
-  useEffect(() => {
-    Animated.timing(controlsProgress, {
-      toValue: controlsVisible ? 1 : 0,
-      duration: 180,
-      useNativeDriver: false,
-    }).start();
-
-    if (!controlsVisible) return;
-
-    if (controlsHideTimerRef.current) {
-      clearTimeout(controlsHideTimerRef.current);
-    }
-
-    controlsHideTimerRef.current = setTimeout(() => {
-      setControlsVisible(false);
-    }, 2000);
-
-    return () => {
-      if (controlsHideTimerRef.current) {
-        clearTimeout(controlsHideTimerRef.current);
-      }
-    };
-  }, [controlsVisible, controlsProgress]);
-
-  useEffect(() => {
-    Animated.timing(chatSheetProgress, {
-      toValue: chatOpen ? 1 : 0,
-      duration: 220,
-      useNativeDriver: false,
-    }).start();
-  }, [chatOpen, chatSheetProgress]);
+  useMediaStateSync({ callState, roomId, localStream, videoOff, muted, sendMediaState });
+  useControlsAutoHide({ controlsVisible, controlsProgress, setControlsVisible });
+  usePipLifecycle({
+    appState,
+    callState,
+    displayName,
+    muted,
+    videoOff,
+    toggleMute,
+    toggleVideo,
+    handleLeave,
+  });
 
   if (!isAuthenticated) {
     return <Redirect href="/login" />;
@@ -1195,11 +832,9 @@ export default function RoomScreen() {
       <View style={[styles.callHeader, !controlsVisible && styles.callHeaderHidden]} pointerEvents={controlsVisible ? "auto" : "none"}>
         <View style={styles.callHeaderRow}>
           <View style={styles.callIdentity}>
-            <Text style={styles.callKicker}>Live call</Text>
             <Text style={styles.callTitle} numberOfLines={1}>
               {remoteDisplayName}
             </Text>
-            <Text style={styles.callSubtitle}>Secure peer call</Text>
           </View>
 
           {callState === "connected" ? (
@@ -1209,965 +844,61 @@ export default function RoomScreen() {
             </View>
           ) : (
             <View style={styles.statusPill}>
-              <Text style={styles.statusPillText}>{getStatusText()}</Text>
+              <Text style={styles.statusPillText}>{statusText}</Text>
             </View>
           )}
         </View>
       </View>
 
-      {/* ── Remote video (full screen) ── */}
-      <View style={styles.remoteContainer}>
-        {showMainLocalVideo ? (
-          <>
-            {videoOff ? (
-              <View style={styles.remoteVideoOffCard}>
-                <View style={styles.remoteBackdropGlow} />
-                <View style={styles.remoteInitialsBadge}>
-                  <Text style={styles.remoteInitialsText}>{initials}</Text>
-                </View>
-                <Text style={styles.remoteVideoOffTitle}>{displayName}</Text>
-                <Text style={styles.remoteVideoOffSubtitle}>Your camera is off</Text>
-              </View>
-            ) : (
-              <RTCView
-                key={`main-local-${localVideoKey}`}
-                streamURL={localStreamUrl}
-                style={styles.remoteVideo}
-                objectFit="cover"
-                mirror={frontCam}
-                zOrder={0}
-              />
-            )}
-            <View style={styles.remoteStateIndicators}>
-              <View style={styles.remoteBadge}>
-                <Text style={styles.remoteBadgeText}>You</Text>
-              </View>
-            </View>
-          </>
-        ) : showRemoteVideo ? (
-          <>
-            <RTCView
-              key={`main-remote-${remoteVideoKey}`}
-              streamURL={remoteStreamUrl}
-              style={styles.remoteVideo}
-              objectFit="cover"
-              zOrder={0}
-            />
-            {/* Remote media state indicators */}
-            <View style={styles.remoteStateIndicators}>
-              <View style={styles.remoteBadge}>
-                <Text style={styles.remoteBadgeText}>{remoteDisplayName}</Text>
-              </View>
-              {!remoteMediaState.audioEnabled && (
-                <View style={styles.stateIndicator}>
-                  <Text style={styles.stateIndicatorText}>Muted</Text>
-                </View>
-              )}
-              {!remoteMediaState.videoEnabled && (
-                <View style={styles.stateIndicatorSecondary}>
-                  <Text style={styles.stateIndicatorSecondaryText}>Camera off</Text>
-                </View>
-              )}
-            </View>
-          </>
-        ) : showRemoteVideoOffCard ? (
-          <View style={styles.remoteVideoOffCard}>
-            <View style={styles.remoteBackdropGlow} />
-            <View style={styles.remoteInitialsBadge}>
-              <Text style={styles.remoteInitialsText}>{remoteInitials}</Text>
-            </View>
-            <Text style={styles.remoteVideoOffTitle}>{remoteDisplayName}</Text>
-            <Text style={styles.remoteVideoOffSubtitle}>Camera is off</Text>
-            <View style={styles.remoteMetaRow}>
-              <View style={styles.remoteMetaChip}>
-                <Text style={styles.remoteMetaChipText}>Audio {remoteMediaState.audioEnabled ? "on" : "muted"}</Text>
-              </View>
-              <View style={styles.remoteMetaChipAlt}>
-                <Text style={styles.remoteMetaChipAltText}>{callState === "connected" ? "Connected" : "Connecting"}</Text>
-              </View>
-            </View>
-            {!remoteMediaState.audioEnabled && (
-              <View style={styles.stateIndicatorRemoteCard}>
-                <Text style={styles.stateIndicatorText}>Muted</Text>
-              </View>
-            )}
-          </View>
-        ) : (
-          <View style={styles.waitingState}>
-            <View style={styles.waitingGlow} />
-            <View style={styles.waitingAvatar}>
-              <Text style={styles.waitingAvatarText}>?</Text>
-            </View>
-            <Text style={styles.waitingTitle}>{getStatusText()}</Text>
-            <Text style={styles.waitingSubtitle}>
-              {callState === "connected"
-                ? "The call is active. Your video appears below."
-                : "As soon as the other person joins, the call will begin automatically."}
-            </Text>
-            {showWaitingPreview && (
-              <View style={styles.waitingPreviewCard}>
-                {videoOff ? (
-                  <View style={styles.cameraOffCard}>
-                    <View style={styles.initialsBadgeLarge}>
-                      <Text style={styles.initialsBadgeLargeText}>{initials}</Text>
-                    </View>
-                    <Text style={styles.cameraOffTitle}>Camera off</Text>
-                    <Text style={styles.cameraOffSubtitle}>Your video is disabled</Text>
-                  </View>
-                ) : (
-                  <>
-                    <RTCView
-                      key={`waiting-local-${localVideoKey}`}
-                      streamURL={localStreamUrl}
-                      style={styles.waitingPreviewVideo}
-                      objectFit="cover"
-                      mirror={frontCam}
-                      zOrder={0}
-                    />
-                    <View style={styles.waitingPreviewLabel}>
-                      <Text style={styles.waitingPreviewLabelText}>Your preview</Text>
-                    </View>
-                  </>
-                )}
-                {muted && (
-                  <View style={styles.mutedBadge}>
-                    <Text style={styles.mutedBadgeText}>Muted</Text>
-                  </View>
-                )}
-              </View>
-            )}
+      <RemoteStage
+        showMainLocalVideo={showMainLocalVideo}
+        videoOff={videoOff}
+        initials={initials}
+        displayName={displayName}
+        localVideoKey={localVideoKey}
+        localStreamUrl={localStreamUrl}
+        frontCam={frontCam}
+        showRemoteVideo={showRemoteVideo}
+        remoteVideoKey={remoteVideoKey}
+        remoteStreamUrl={remoteStreamUrl}
+        remoteDisplayName={remoteDisplayName}
+        remoteMediaState={remoteMediaState}
+        showRemoteVideoOffCard={showRemoteVideoOffCard}
+        remoteInitials={remoteInitials}
+        callState={callState}
+        localStream={localStream}
+        statusText={statusText}
+      />
 
-          </View>
-        )}
-      </View>
+      <LocalPip
+        showConnectedPreview={showConnectedPreview}
+        pipWidth={pipWidth}
+        pipHeight={pipHeight}
+        pipPosition={pipPosition}
+        pipPanHandlers={pipPanResponder.panHandlers}
+        togglePrimaryFeed={togglePrimaryFeed}
+        isLocalPrimary={isLocalPrimary}
+        remoteVideoKey={remoteVideoKey}
+        remoteStreamUrl={remoteStreamUrl}
+        videoOff={videoOff}
+        initials={initials}
+        localVideoKey={localVideoKey}
+        localStreamUrl={localStreamUrl}
+        frontCam={frontCam}
+      />
 
-      {/* ── Local video (PiP) ── */}
-      {showConnectedPreview && (
-        <Animated.View
-          style={[
-            styles.localPip,
-            {
-              width: pipWidth,
-              height: pipHeight,
-              transform: pipPosition.getTranslateTransform(),
-            },
-          ]}
-          {...pipPanResponder.panHandlers}
-        >
-          <TouchableOpacity style={styles.pipSwapBadge} onPress={togglePrimaryFeed} activeOpacity={0.85}>
-            <Text style={styles.pipSwapBadgeText}>Swap</Text>
-          </TouchableOpacity>
-
-          {isLocalPrimary ? (
-            <RTCView
-              key={`pip-remote-${remoteVideoKey}`}
-              streamURL={remoteStreamUrl}
-              style={styles.localVideo}
-              objectFit="cover"
-              zOrder={2}
-            />
-          ) : videoOff ? (
-            <View style={styles.cameraOffCardCompact}>
-              <View style={styles.initialsBadgeSmall}>
-                <Text style={styles.initialsBadgeSmallText}>{initials}</Text>
-              </View>
-              <Text style={styles.cameraOffCompactText}>Camera off</Text>
-            </View>
-          ) : (
-            <RTCView
-              key={`pip-local-${localVideoKey}`}
-              streamURL={localStreamUrl}
-              style={styles.localVideo}
-              objectFit="cover"
-              mirror={frontCam}
-              zOrder={2}
-            />
-          )}
-        </Animated.View>
-      )}
-
-      <Animated.View
-        pointerEvents={chatOpen ? "auto" : "none"}
-        style={[
-          styles.chatSheet,
-          {
-            opacity: chatSheetProgress,
-            transform: [
-              {
-                translateY: chatSheetProgress.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [SH * 0.52, 0],
-                }),
-              },
-            ],
-          },
-        ]}
-      >
-        <View style={styles.chatSheetChrome}>
-          <View style={styles.chatSheetHandle} />
-          <View style={styles.chatSheetHeader}>
-            <View>
-              <Text style={styles.chatSheetTitle}>Chat</Text>
-              <Text style={styles.chatSheetSubtitle}>Messages stay on top of the call</Text>
-            </View>
-          </View>
-        </View>
-        <ChatPanel
-          roomId={roomId}
-          myName={user?.username ?? routeUsername}
-          onClose={() => setChatOpen(false)}
-          style={styles.chatInner}
-        />
-      </Animated.View>
-
-      {/* ── Controls ── */}
-      <Animated.View style={[styles.controls, { opacity: controlsProgress, transform: [{ translateY: controlsProgress.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }] }]} pointerEvents={controlsVisible ? "auto" : "none"}>
-        <View style={styles.controlsRowPrimary}>
-          <CtrlBtn icon={muted ? "microphone-off" : "microphone"} label="Audio" active={muted} onPress={toggleMute} size={58} />
-          <CtrlBtn icon={videoOff ? "video-off" : "video"} label="Camera" active={videoOff} onPress={toggleVideo} size={58} />
-          <TouchableOpacity style={styles.endBtn} onPress={handleLeave} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="phone-hangup" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          <CtrlBtn icon="camera-flip" label="Rotate" onPress={flipCamera} size={58} />
-        </View>
-        <View style={styles.controlsRowSecondary}>
-          <CtrlBtn
-            icon={audioRoute === "speaker" ? "volume-high" : "bluetooth-audio"}
-            label={audioRoute === "speaker" ? "Speaker" : "Device"}
-            onPress={openAudioRoutePicker}
-            active={audioRoute === "speaker"}
-            size={52}
-          />
-          <CtrlBtn
-            icon="swap-horizontal"
-            label="Switch"
-            onPress={togglePrimaryFeed}
-            disabled={!canSwapStreams}
-            size={52}
-          />
-          <CtrlBtn
-            icon={chatOpen ? "close" : "chat"}
-            label={chatOpen ? "Hide chat" : "Chat"}
-            onPress={() => setChatOpen((o) => !o)}
-            active={chatOpen}
-            size={52}
-          />
-        </View>
-      </Animated.View>
+      <CallControls
+        controlsVisible={controlsVisible}
+        controlsProgress={controlsProgress}
+        flipCamera={flipCamera}
+        videoOff={videoOff}
+        toggleVideo={toggleVideo}
+        handleLeave={handleLeave}
+        muted={muted}
+        toggleMute={toggleMute}
+        audioRoute={audioRoute}
+        openAudioRoutePicker={openAudioRoutePicker}
+      />
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#07111C" },
-  bgOrbTop: {
-    position: "absolute",
-    top: -120,
-    right: -100,
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: "#60A5FA22",
-  },
-  bgOrbBottom: {
-    position: "absolute",
-    bottom: -160,
-    left: -120,
-    width: 360,
-    height: 360,
-    borderRadius: 180,
-    backgroundColor: "#14B8A61E",
-  },
-  callHeader: {
-    position: "absolute",
-    top: Platform.OS === "ios" ? 54 : 28,
-    left: 16,
-    right: 16,
-    zIndex: 25,
-    gap: 12,
-  },
-  callHeaderHidden: {
-    opacity: 0,
-    transform: [{ translateY: -12 }],
-  },
-  callHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  callIdentity: {
-    flex: 1,
-    backgroundColor: "#FFFFFF14",
-    borderWidth: 1,
-    borderColor: "#FFFFFF24",
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backdropFilter: "blur(8px)",
-  },
-  callKicker: {
-    color: "#A5B4FC",
-    fontSize: 10,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 1.2,
-    marginBottom: 3,
-  },
-  callTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "800",
-    letterSpacing: 0.2,
-  },
-  callSubtitle: {
-    color: "#C7D2FE",
-    fontSize: 12,
-    marginTop: 2,
-    opacity: 0.85,
-  },
-  statusPill: {
-    backgroundColor: "#FFFFFF16",
-    borderWidth: 1,
-    borderColor: "#FFFFFF24",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 16,
-  },
-  statusPillText: {
-    color: "#E2E8F0",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  livePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#10B98122",
-    borderWidth: 1,
-    borderColor: "#34D39966",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 16,
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#34D399",
-  },
-  livePillText: {
-    color: "#D1FAE5",
-    fontSize: 12,
-    fontWeight: "800",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  headerActions: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  headerChip: {
-    flex: 1,
-    backgroundColor: "#FFFFFF14",
-    borderWidth: 1,
-    borderColor: "#FFFFFF22",
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  headerChipActive: {
-    backgroundColor: "#0F172A88",
-    borderColor: "#7DD3FC66",
-  },
-  headerChipLabel: {
-    color: "#94A3B8",
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginBottom: 2,
-  },
-  headerChipValue: {
-    color: "#F8FAFC",
-    fontSize: 13,
-    fontWeight: "800",
-    letterSpacing: 0.4,
-  },
-  remoteContainer: { ...StyleSheet.absoluteFillObject },
-  remoteVideo: { flex: 1, backgroundColor: "#07111C" },
-  videoScrimTop: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 180,
-    backgroundColor: "#00000033",
-  },
-  videoScrimBottom: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 220,
-    backgroundColor: "#00000055",
-  },
-  remoteStateIndicators: {
-    position: "absolute",
-    top: 126,
-    right: 16,
-    gap: 8,
-    zIndex: 15,
-  },
-  remoteBadge: {
-    alignSelf: "flex-end",
-    backgroundColor: "#0F172ACC",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#FFFFFF22",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  remoteBadgeText: {
-    color: "#F8FAFC",
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  stateIndicator: {
-    backgroundColor: "#EF444422",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: "#FCA5A544",
-    alignSelf: "flex-end",
-  },
-  stateIndicatorText: {
-    color: "#FCA5A5",
-    fontSize: 12,
-    fontWeight: "700",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  stateIndicatorSecondary: {
-    backgroundColor: "#FFFFFF18",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: "#FFFFFF22",
-    alignSelf: "flex-end",
-  },
-  stateIndicatorSecondaryText: {
-    color: "#E2E8F0",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  remoteVideoOffCard: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#07111C",
-    gap: 10,
-    paddingHorizontal: 24,
-  },
-  remoteBackdropGlow: {
-    position: "absolute",
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: "#5B5FED22",
-    top: -30,
-    right: -50,
-  },
-  remoteInitialsBadge: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#7DD3FC55",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 8,
-  },
-  remoteInitialsText: {
-    color: "#E2E8F0",
-    fontSize: 34,
-    fontWeight: "800",
-    letterSpacing: 1,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  remoteVideoOffTitle: {
-    color: "#FFFFFF",
-    fontSize: 22,
-    fontWeight: "800",
-  },
-  remoteVideoOffSubtitle: {
-    color: "#94A3B8",
-    fontSize: 13,
-  },
-  remoteMetaRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 4,
-  },
-  remoteMetaChip: {
-    backgroundColor: "#10B98122",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#34D39955",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  remoteMetaChipText: {
-    color: "#D1FAE5",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  remoteMetaChipAlt: {
-    backgroundColor: "#FFFFFF12",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#FFFFFF20",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  remoteMetaChipAltText: {
-    color: "#E2E8F0",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  stateIndicatorRemoteCard: {
-    marginTop: 8,
-    backgroundColor: "#EF444422",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: "#FCA5A544",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  waitingState: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 16,
-    backgroundColor: "#07111C",
-    paddingHorizontal: 24,
-  },
-  waitingGlow: {
-    position: "absolute",
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: "#14B8A622",
-    top: 70,
-  },
-  waitingAvatar: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#7DD3FC55",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.28,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  waitingAvatarText: { fontSize: 40, color: "#E2E8F0" },
-  waitingTitle: { color: "#FFFFFF", fontSize: 20, fontWeight: "800" },
-  waitingSubtitle: {
-    color: "#94A3B8",
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: "center",
-    maxWidth: 320,
-  },
-  roomCodeBtn: {
-    backgroundColor: "#0F172A",
-    borderWidth: 1,
-    borderColor: "#7DD3FC33",
-    borderRadius: 18,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    alignItems: "center",
-    gap: 4,
-    minWidth: 220,
-  },
-  roomCodeLabel: {
-    fontSize: 10,
-    color: "#94A3B8",
-    fontWeight: "700",
-    letterSpacing: 1.5,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  roomCodeValue: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#E2E8F0",
-    letterSpacing: 4,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  roomCodeCopy: { fontSize: 11, color: "#7DD3FC", marginTop: 4, fontWeight: "700" },
-  localPip: {
-    position: "absolute",
-    left: 16,
-    top: 160,
-    borderRadius: 18,
-    overflow: "hidden",
-    borderWidth: 2,
-    borderColor: "#7DD3FC66",
-    zIndex: 10,
-    backgroundColor: "#0F172A",
-    elevation: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.34,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 10 },
-  },
-  localVideo: { flex: 1 },
-  pipLabel: {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    zIndex: 2,
-    backgroundColor: "#00000088",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  pipLabelText: {
-    color: "#F8FAFC",
-    fontSize: 9,
-    fontWeight: "800",
-    letterSpacing: 1,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  cameraOffCardCompact: {
-    flex: 1,
-    backgroundColor: "#0B1220",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    padding: 8,
-  },
-  initialsBadgeSmall: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#11131F",
-    borderWidth: 1,
-    borderColor: "#5B5FED66",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  initialsBadgeSmallText: {
-    color: "#E8E8FF",
-    fontSize: 14,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  cameraOffCompactText: {
-    color: "#E2E8F0",
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  waitingPreviewCard: {
-    width: "82%",
-    maxWidth: 320,
-    aspectRatio: 9 / 16,
-    borderRadius: 22,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#7DD3FC33",
-    backgroundColor: "#07111C",
-    marginTop: 6,
-    shadowColor: "#000",
-    shadowOpacity: 0.34,
-    shadowRadius: 22,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 8,
-  },
-  waitingPreviewVideo: { flex: 1 },
-  cameraOffCard: {
-    flex: 1,
-    backgroundColor: "#0B1220",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    padding: 14,
-  },
-  initialsBadgeLarge: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: "#11131F",
-    borderWidth: 1,
-    borderColor: "#5B5FED66",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  initialsBadgeLargeText: {
-    color: "#E8E8FF",
-    fontSize: 30,
-    fontWeight: "800",
-    letterSpacing: 1,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  cameraOffTitle: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  cameraOffSubtitle: {
-    color: "#94A3B8",
-    fontSize: 12,
-  },
-  waitingPreviewLabel: {
-    position: "absolute",
-    left: 10,
-    bottom: 10,
-    backgroundColor: "#00000088",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  waitingPreviewLabelText: {
-    color: "#E8E8FF",
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 0.6,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  mutedBadge: {
-    position: "absolute",
-    bottom: 6,
-    left: 6,
-    backgroundColor: "#EF444422",
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: "#FCA5A544",
-  },
-  mutedBadgeText: {
-    color: "#FCA5A5",
-    fontSize: 8,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  chatLauncher: {
-    position: "absolute",
-    right: 16,
-    bottom: 92,
-    zIndex: 24,
-    backgroundColor: "#0F172AE6",
-    borderWidth: 1,
-    borderColor: "#7DD3FC55",
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    shadowColor: "#000",
-    shadowOpacity: 0.3,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
-  },
-  chatLauncherActive: {
-    backgroundColor: "#111827F2",
-    borderColor: "#A5B4FC66",
-  },
-  chatLauncherIcon: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  chatLauncherText: {
-    color: "#D7E5F2",
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  chatSheet: {
-    position: "absolute",
-    left: 12,
-    right: 12,
-    bottom: 84,
-    height: SH * 0.48,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    backgroundColor: "#08111B",
-    borderWidth: 1,
-    borderColor: "#7DD3FC33",
-    overflow: "hidden",
-    zIndex: 30,
-    shadowColor: "#000",
-    shadowOpacity: 0.32,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 16,
-  },
-  chatSheetChrome: {
-    paddingTop: 8,
-    backgroundColor: "#08111B",
-    borderBottomWidth: 1,
-    borderBottomColor: "#163247",
-  },
-  chatSheetHandle: {
-    alignSelf: "center",
-    width: 42,
-    height: 4,
-    borderRadius: 999,
-    backgroundColor: "#334155",
-    marginBottom: 10,
-  },
-  chatSheetHeader: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  chatSheetTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  chatSheetSubtitle: {
-    color: "#94A3B8",
-    fontSize: 12,
-    marginTop: 3,
-  },
-  chatSheetClose: {
-    backgroundColor: "#FFFFFF10",
-    borderWidth: 1,
-    borderColor: "#FFFFFF18",
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  chatSheetCloseText: {
-    color: "#E2E8F0",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  chatPanel: {
-    position: "absolute",
-    bottom: 110,
-    left: 0,
-    right: 0,
-    height: SH * 0.45,
-    zIndex: 30,
-    borderTopWidth: 1,
-    borderTopColor: "#1A1B2E",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    overflow: "hidden",
-  },
-  chatInner: {
-    backgroundColor: "#08111B",
-  },
-  controls: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: "column",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 10,
-    paddingBottom: Platform.OS === "ios" ? 36 : 20,
-    paddingTop: 14,
-    paddingHorizontal: 16,
-    backgroundColor: "#08111BCC",
-    borderTopWidth: 1,
-    borderTopColor: "#23415A66",
-    zIndex: 20,
-  },
-  controlsRowPrimary: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 10,
-  },
-  controlsRowSecondary: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: 10,
-  },
-  controlsHidden: {
-    opacity: 0,
-    transform: [{ translateY: 18 }],
-  },
-  ctrlBtn: {
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FFFFFF12",
-    borderWidth: 1,
-    borderColor: "#FFFFFF22",
-    gap: 4,
-  },
-  ctrlBtnActive: { backgroundColor: "#7DD3FC22", borderColor: "#7DD3FC66" },
-  ctrlBtnDanger: { backgroundColor: "#EF444422", borderColor: "#EF444466" },
-  ctrlBtnDisabled: { opacity: 0.45, borderColor: "#FFFFFF18" },
-  ctrlIcon: { color: "#FFFFFF" },
-  ctrlIconDanger: {},
-  ctrlIconDisabled: { color: "#CBD5E1" },
-  ctrlLabel: { fontSize: 9, color: "#D7E5F2", marginTop: 2, fontWeight: "700" },
-  endBtn: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: "#EF4444",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#EF4444",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  endBtnIcon: {
-    fontSize: 15,
-    color: "#FFFFFF",
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  pipSwapBadge: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    zIndex: 3,
-    backgroundColor: "#0B132499",
-    borderWidth: 1,
-    borderColor: "#FFFFFF22",
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  pipSwapBadgeText: {
-    color: "#E2E8F0",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-  },
-});

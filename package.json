@@ -1,5 +1,5 @@
 {
-  "name": "com.rtc.parastud",
+  "name": "facechat",
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
@@ -8,7 +8,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
@@ -31,7 +31,6 @@
     "expo-pip": "^2.1.0",
     "expo-router": "~5.1.0",
     "expo-secure-store": "^55.0.13",
-    "expo-splash-screen": "~0.30.9",
     "expo-status-bar": "~2.2.3",
     "expo-symbols": "~0.4.5",
     "expo-system-ui": "~5.0.8",

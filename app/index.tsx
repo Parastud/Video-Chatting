@@ -1,98 +1,190 @@
 import { Redirect, useRouter, type Href } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Platform,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { useAuth } from "../context/AuthProvider";
+import { useCustomAlert } from "../context/AlertProvider";
 import { useSocket } from "../context/SocketProvider";
-import { useAppDispatch, useAppSelector } from "../store/hooks";
-import { setMainTab } from "../store/slices/uiSlice";
+import { useAuthSession } from "../src/hooks/useAuthSession";
+import { useAddContactMutation, useGetContactsQuery, useLazySearchUsersQuery, type ContactUser } from "../src/store/api/contactsApi";
+import { useAppDispatch, useAppSelector } from "../src/store/hooks";
+import { setContactsTab } from "../src/store/slices/uiSlice";
 
-const generateRoomId = () => {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const seg = (n: number) =>
-    Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  return `${seg(4)}-${seg(4)}`;
-};
+type AppUser = ContactUser;
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
-  return "Something went wrong";
+  return "Request failed";
 };
 
-const roomHref = (roomId: string, username: string): Href =>
+const callRoomHref = (roomId: string, username: string, callTo: string): Href =>
   ({
     pathname: "/Room/[id]",
-    params: { id: roomId, username },
+    params: { id: roomId, username, callTo },
   }) as Href;
+
+const UserCard = ({
+  item,
+  onCall,
+  showMeta,
+}: {
+  item: AppUser;
+  onCall: (user: AppUser) => void;
+  showMeta?: boolean;
+}) => {
+  const online = item.status === "online";
+  const busy = item.status === "busy";
+  const callable = item.status !== "offline";
+
+  return (
+    <View style={styles.userCard}>
+      <View style={[styles.avatar, online ? styles.avatarOnline : styles.avatarOffline]}>
+        <Text style={styles.avatarText}>{item.username[0]?.toUpperCase()}</Text>
+      </View>
+
+      <View style={styles.userMain}>
+        <Text style={styles.username}>{item.username}</Text>
+        <Text style={[styles.status, online ? styles.statusOnline : busy ? styles.statusBusy : styles.statusOffline]}>
+          {online ? "Online" : busy ? "Busy" : "Offline"}
+        </Text>
+        {showMeta ? <Text style={styles.userId}>{item.id}</Text> : null}
+      </View>
+
+      <TouchableOpacity
+        style={[styles.callButton, !callable && styles.callButtonDisabled]}
+        disabled={!callable}
+        onPress={() => onCall(item)}
+      >
+        <Text style={styles.callButtonText}>Call</Text>
+      </TouchableOpacity>
+    </View>
+  );
+};
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { joinRoom, isConnected } = useSocket();
-  const { isAuthenticated, user, hydrated } = useAuth();
+  const { isAuthenticated, user: currentUser, hydrated } = useAuthSession();
+  const { callUser } = useSocket();
+  const { showAlert } = useCustomAlert();
   const dispatch = useAppDispatch();
-  const activeTab = useAppSelector((state) => state.ui.mainTab);
+  const activeTab = useAppSelector((state) => state.ui.contactsTab);
+  const { data: contacts = [], refetch } = useGetContactsQuery(undefined, {
+    skip: !currentUser?.id,
+    pollingInterval: 5000,
+  });
+  const [triggerSearch, { isFetching: loadingSearch }] = useLazySearchUsersQuery();
+  const [addContact] = useAddContactMutation();
 
-  const [username, setUsername] = useState("");
-  const [roomId, setRoomId] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [searchResults, setSearchResults] = useState<AppUser[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (user?.username) {
-      setUsername(user.username);
-    }
-  }, [user?.username]);
+  const onlineCount = useMemo(
+    () => contacts.filter((contact) => contact.status === "online").length,
+    [contacts]
+  );
 
-  const handleJoin = useCallback(async () => {
-    const name = username.trim();
-    const room = roomId.trim().toUpperCase();
+  const handleSearch = useCallback(
+    async (text: string) => {
+      setSearchQuery(text);
 
-    if (!name) return Alert.alert("Missing name", "Please enter your name.");
-    if (!room) return Alert.alert("Missing room", "Please enter a room code.");
-    if (!isConnected) return Alert.alert("Not connected", "Connecting to server...");
+      if (!text.trim()) {
+        setSearchResults([]);
+        return;
+      }
 
-    setLoading(true);
-    try {
-      await joinRoom({ Username: name, RoomId: room });
-      router.replace(roomHref(room, name));
-    } catch (error: unknown) {
-      Alert.alert("Could not join", getErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, [username, roomId, isConnected, joinRoom, router]);
+      try {
+        const data = await triggerSearch(text).unwrap();
+        setSearchResults((data || []).filter((item) => item.id !== currentUser?.id));
+      } catch (error: unknown) {
+        console.warn("[Contacts] search failed:", getErrorMessage(error));
+      }
+    },
+    [currentUser?.id, triggerSearch]
+  );
 
-  const handleCreate = useCallback(async () => {
-    const name = username.trim();
-    if (!name) return Alert.alert("Missing name", "Please enter your name.");
-    if (!isConnected) return Alert.alert("Not connected", "Connecting to server...");
+  const handleCall = useCallback(
+    (targetUser: AppUser) => {
+      if (!currentUser?.id) {
+        showAlert("Error", "Please login first");
+        return;
+      }
 
-    const newRoom = generateRoomId();
-    setRoomId(newRoom);
-    setLoading(true);
+      if (targetUser.status === "offline") {
+        showAlert("User offline", `${targetUser.username} is not available right now.`);
+        return;
+      }
 
-    try {
-      await joinRoom({ Username: name, RoomId: newRoom });
-      router.replace(roomHref(newRoom, name));
-    } catch (error: unknown) {
-      Alert.alert("Could not create room", getErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  }, [username, isConnected, joinRoom, router]);
+      showAlert("Start call", `Call ${targetUser.username}?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Call",
+          onPress: async () => {
+            const sortedIds = [String(currentUser.id), String(targetUser.id)].sort();
+            const roomId = `direct-${sortedIds[0]}-${sortedIds[1]}`;
+
+            const response = await callUser({
+              fromUserId: currentUser.id,
+              toUserId: targetUser.id,
+              roomId,
+              fromUsername: currentUser.username,
+            });
+
+            if (!response.success) {
+              showAlert("Call failed", String(response.error || "Unable to place call"));
+              return;
+            }
+
+            const callStatus = String((response as { status?: unknown })?.status || "ringing");
+            if (callStatus === "on-hold") {
+              const queuePosition = Number((response as { queuePosition?: unknown })?.queuePosition || 1);
+              showAlert(
+                "Call on hold",
+                `${targetUser.username} is busy. Your call is queued at position ${queuePosition}.`
+              );
+            }
+
+            router.replace(callRoomHref(roomId, currentUser.username, targetUser.id));
+          },
+        },
+      ]);
+    },
+    [callUser, currentUser, router, showAlert]
+  );
+
+  const handleAddContact = useCallback(
+    async (targetUser: AppUser) => {
+      if (!currentUser?.id) return;
+
+      try {
+        await addContact({ contactUserId: targetUser.id }).unwrap();
+        setSearchResults((prev) => prev.filter((item) => item.id !== targetUser.id));
+        showAlert("Added", `${targetUser.username} is now in your contacts`);
+      } catch (error: unknown) {
+        showAlert("Add failed", getErrorMessage(error));
+      }
+    },
+    [addContact, currentUser?.id, showAlert]
+  );
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await refetch();
+    setRefreshing(false);
+  }, [refetch]);
 
   if (!hydrated) {
     return (
-      <View style={[styles.root, styles.loadingShell]}>
-        <ActivityIndicator color="#0E1116" />
+      <View style={styles.loadingShell}>
+        <ActivityIndicator color="#F5A623" />
       </View>
     );
   }
@@ -101,285 +193,354 @@ export default function HomeScreen() {
     return <Redirect href="/login" />;
   }
 
+  const listData = activeTab === "contacts" ? contacts : searchResults;
+
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-    >
-      <View style={styles.heroBlobA} />
-      <View style={styles.heroBlobB} />
+    <View style={styles.container}>
+      <View style={styles.bgGlowA} />
+      <View style={styles.bgGlowB} />
 
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>Call Studio</Text>
-        <Text style={styles.logo}>Linkup</Text>
-        <Text style={styles.tagline}>Create a room or drop into one with a code.</Text>
+        <Text style={styles.kicker}>Directory</Text>
+        <Text style={styles.title}>People</Text>
+        <Text style={styles.subtitle}>Search, save, and call from one place.</Text>
+      </View>
 
-        <View style={styles.statusPill}>
-          <View style={[styles.statusDot, isConnected ? styles.dotOnline : styles.dotOffline]} />
-          <Text style={styles.statusText}>{isConnected ? "Server online" : "Reconnecting"}</Text>
+      <View style={styles.metricRow}>
+        <View style={styles.metricCard}>
+          <Text style={styles.metricLabel}>Contacts</Text>
+          <Text style={styles.metricValue}>{contacts.length}</Text>
+        </View>
+        <View style={[styles.metricCard, styles.metricCardOnline]}>
+          <Text style={styles.metricLabel}>Online</Text>
+          <Text style={[styles.metricValue, styles.metricValueOnline]}>{onlineCount}</Text>
         </View>
       </View>
 
-      <View style={styles.card}>
-        <View style={styles.tabRow}>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === "join" && styles.tabActive]}
-            onPress={() => dispatch(setMainTab("join"))}
-          >
-            <Text style={[styles.tabText, activeTab === "join" && styles.tabTextActive]}>
-              Join
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === "create" && styles.tabActive]}
-            onPress={() => dispatch(setMainTab("create"))}
-          >
-            <Text style={[styles.tabText, activeTab === "create" && styles.tabTextActive]}>
-              Create
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Display name</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Aisha, Rohan, John..."
-            placeholderTextColor="#8896A8"
-            value={username}
-            onChangeText={setUsername}
-            maxLength={30}
-            autoCapitalize="words"
-            returnKeyType="next"
-          />
-        </View>
-
-        {activeTab === "join" && (
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>Room code</Text>
-            <TextInput
-              style={[styles.input, styles.inputCode]}
-              placeholder="XXXX-XXXX"
-              placeholderTextColor="#8896A8"
-              value={roomId}
-              onChangeText={(text) => setRoomId(text.toUpperCase())}
-              maxLength={9}
-              autoCapitalize="characters"
-              returnKeyType="done"
-              onSubmitEditing={handleJoin}
-            />
-          </View>
-        )}
-
+      <View style={styles.tabs}>
         <TouchableOpacity
-          style={[styles.primaryButton, loading && styles.primaryButtonDisabled]}
-          onPress={activeTab === "join" ? handleJoin : handleCreate}
-          disabled={loading}
-          activeOpacity={0.86}
+          style={[styles.tab, activeTab === "contacts" && styles.tabActive]}
+          onPress={() => dispatch(setContactsTab("contacts"))}
         >
-          {loading ? (
-            <ActivityIndicator color="#0E1116" />
-          ) : (
-            <Text style={styles.primaryButtonText}>
-              {activeTab === "join" ? "Join room" : "Generate room"}
-            </Text>
-          )}
+          <Text style={[styles.tabText, activeTab === "contacts" && styles.tabTextActive]}>
+            My Network
+          </Text>
         </TouchableOpacity>
-
-        <View style={styles.secondaryRow}>
-          <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push("/contacts") }>
-            <Text style={styles.secondaryButtonText}>Open contacts</Text>
-          </TouchableOpacity>
-        </View>
-
-        <Text style={styles.signedIn}>Signed in as {user?.username}</Text>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === "search" && styles.tabActive]}
+          onPress={() => dispatch(setContactsTab("search"))}
+        >
+          <Text style={[styles.tabText, activeTab === "search" && styles.tabTextActive]}>
+            Discover
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <Text style={styles.footer}>Encrypted sessions · Invite-only rooms</Text>
-    </KeyboardAvoidingView>
+      {activeTab === "search" ? (
+        <View style={styles.searchWrap}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Find users by username"
+            placeholderTextColor="#64748B"
+            value={searchQuery}
+            onChangeText={handleSearch}
+          />
+          {loadingSearch ? <ActivityIndicator color="#38BDF8" style={styles.searchLoader} /> : null}
+        </View>
+      ) : null}
+
+      {listData.length === 0 ? (
+        <View style={styles.emptyWrap}>
+          <Text style={styles.emptyText}>
+            {activeTab === "contacts"
+              ? "No contacts yet. Switch to Discover and add people."
+              : searchQuery
+                ? "No matching users found."
+                : "Start typing to search for users."}
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={listData}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.list}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38BDF8" />}
+          renderItem={({ item }) => (
+            <View style={styles.listItemWrap}>
+              <UserCard item={item} onCall={handleCall} showMeta={activeTab === "contacts"} />
+              {activeTab === "search" ? (
+                <TouchableOpacity style={styles.addButton} onPress={() => handleAddContact(item)}>
+                  <Text style={styles.addButtonText}>Add</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
+        />
+      )}
+
+      {currentUser?.id ? <Text style={styles.currentUser}>You: {currentUser.id}</Text> : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
+  container: {
     flex: 1,
-    backgroundColor: "#F7F8F2",
-    paddingHorizontal: 22,
-    justifyContent: "center",
+    backgroundColor: "#09090B",
+    paddingTop: 56,
   },
   loadingShell: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#09090B",
   },
-  heroBlobA: {
+  bgGlowA: {
     position: "absolute",
-    top: -130,
-    right: -80,
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: "#79D8B824",
+    top: -120,
+    right: -100,
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: "#3B82F6", // Blue
+    opacity: 0.1,
   },
-  heroBlobB: {
+  bgGlowB: {
     position: "absolute",
-    bottom: -150,
-    left: -110,
+    bottom: -160,
+    left: -120,
     width: 360,
     height: 360,
     borderRadius: 180,
-    backgroundColor: "#F59E0B22",
+    backgroundColor: "#8B5CF6", // Indigo
+    opacity: 0.1,
   },
   header: {
-    marginBottom: 24,
-    alignItems: "center",
+    paddingHorizontal: 24,
+    marginBottom: 16,
   },
-  eyebrow: {
-    color: "#0E7490",
-    fontSize: 12,
+  kicker: {
+    fontSize: 11,
     textTransform: "uppercase",
-    letterSpacing: 1.4,
-    fontWeight: "700",
-    marginBottom: 8,
+    letterSpacing: 2,
+    color: "#38BDF8", // Sky
+    fontWeight: "800",
   },
-  logo: {
-    fontSize: 48,
-    fontFamily: Platform.OS === "ios" ? "Times New Roman" : "serif",
-    color: "#17212B",
-    marginBottom: 8,
+  title: {
+    fontSize: 40,
+    color: "#F8FAFC",
+    fontFamily: Platform.OS === "ios" ? "Helvetica Neue" : "sans-serif",
+    fontWeight: "800",
+    letterSpacing: -1,
   },
-  tagline: {
-    color: "#3D5368",
+  subtitle: {
+    marginTop: 4,
+    color: "#94A3B8",
     fontSize: 14,
-    marginBottom: 14,
   },
-  statusPill: {
+  metricRow: {
+    paddingHorizontal: 24,
     flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#FFFFFFD8",
-    borderColor: "#DDE4EA",
+    gap: 12,
+    marginBottom: 16,
+  },
+  metricCard: {
+    flex: 1,
+    backgroundColor: "rgba(20, 20, 24, 0.6)",
     borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.08)",
     borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  metricCardOnline: {
+    backgroundColor: "rgba(16, 185, 129, 0.05)",
+    borderColor: "rgba(16, 185, 129, 0.15)",
   },
-  dotOnline: {
-    backgroundColor: "#10B981",
-  },
-  dotOffline: {
-    backgroundColor: "#EF4444",
-  },
-  statusText: {
-    color: "#486074",
+  metricLabel: {
     fontSize: 12,
-    fontWeight: "600",
+    color: "#94A3B8",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
   },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "#DDE4EA",
-    padding: 20,
+  metricValue: {
+    fontSize: 24,
+    color: "#F8FAFC",
+    fontWeight: "800",
   },
-  tabRow: {
-    flexDirection: "row",
-    backgroundColor: "#EEF2F5",
-    borderRadius: 12,
+  metricValueOnline: {
+    color: "#34D399",
+  },
+  tabs: {
+    marginHorizontal: 24,
+    marginBottom: 16,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
+    borderRadius: 14,
     padding: 4,
-    marginBottom: 20,
+    flexDirection: "row",
   },
   tab: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 10,
-    paddingVertical: 10,
+    borderRadius: 12,
+    paddingVertical: 12,
   },
   tabActive: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
     borderWidth: 1,
-    borderColor: "#D7E0E8",
+    borderColor: "rgba(255, 255, 255, 0.05)",
   },
   tabText: {
-    color: "#6B8094",
-    fontSize: 13,
-    fontWeight: "700",
+    color: "#64748B",
+    fontSize: 14,
+    fontWeight: "600",
   },
   tabTextActive: {
-    color: "#1C3145",
-  },
-  fieldGroup: {
-    marginBottom: 14,
-  },
-  label: {
-    color: "#416077",
-    fontSize: 12,
+    color: "#F8FAFC",
     fontWeight: "700",
-    marginBottom: 6,
   },
-  input: {
-    backgroundColor: "#F7FAFC",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#D8E1E9",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: "#19324A",
-  },
-  inputCode: {
-    letterSpacing: 2.8,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  primaryButton: {
-    marginTop: 6,
-    borderRadius: 14,
-    paddingVertical: 14,
+  searchWrap: {
+    marginHorizontal: 24,
+    flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FCD34D",
+    marginBottom: 12,
+  },
+  searchInput: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
     borderWidth: 1,
-    borderColor: "#F2C244",
-  },
-  primaryButtonDisabled: {
-    opacity: 0.65,
-  },
-  primaryButtonText: {
-    color: "#1F2937",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: "#F8FAFC",
     fontSize: 15,
+  },
+  searchLoader: {
+    marginLeft: 12,
+  },
+  emptyWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  emptyText: {
+    textAlign: "center",
+    color: "#64748B",
+    lineHeight: 22,
+    fontSize: 15,
+  },
+  list: {
+    paddingHorizontal: 24,
+    paddingVertical: 8,
+    paddingBottom: 32,
+  },
+  listItemWrap: {
+    marginVertical: 6,
+  },
+  userCard: {
+    backgroundColor: "rgba(20, 20, 24, 0.6)",
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 14,
+  },
+  avatarOnline: {
+    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(16, 185, 129, 0.3)",
+  },
+  avatarOffline: {
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  avatarText: {
+    color: "#F8FAFC",
+    fontSize: 18,
     fontWeight: "800",
   },
-  secondaryRow: {
-    marginTop: 12,
-    alignItems: "center",
+  userMain: {
+    flex: 1,
   },
-  secondaryButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: "#E8F6F1",
-    borderColor: "#BEE9D9",
-    borderWidth: 1,
+  username: {
+    color: "#F8FAFC",
+    fontSize: 16,
+    fontWeight: "700",
   },
-  secondaryButtonText: {
-    color: "#0F766E",
+  status: {
+    fontSize: 13,
+    marginTop: 4,
+    fontWeight: "500",
+  },
+  statusOnline: {
+    color: "#34D399",
+  },
+  statusBusy: {
+    color: "#F59E0B",
+  },
+  statusOffline: {
+    color: "#64748B",
+  },
+  userId: {
+    color: "#475569",
+    fontSize: 11,
+    marginTop: 4,
+  },
+  callButton: {
+    backgroundColor: "#6366F1",
+    shadowColor: "#6366F1",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    elevation: 2,
+  },
+  callButtonDisabled: {
+    opacity: 0.5,
+    backgroundColor: "rgba(255,255,255,0.1)",
+    shadowOpacity: 0,
+  },
+  callButtonText: {
+    color: "#FFFFFF",
     fontWeight: "700",
     fontSize: 13,
   },
-  signedIn: {
-    textAlign: "center",
-    color: "#6D7C8D",
-    marginTop: 14,
-    fontSize: 12,
+  addButton: {
+    position: "absolute",
+    right: 16,
+    top: 16,
+    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    borderWidth: 1,
+    borderColor: "rgba(16, 185, 129, 0.3)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
-  footer: {
-    textAlign: "center",
-    marginTop: 16,
-    color: "#7F8E9E",
+  addButtonText: {
+    color: "#34D399",
     fontSize: 12,
+    fontWeight: "800",
+  },
+  currentUser: {
+    textAlign: "center",
+    color: "#64748B",
+    fontSize: 12,
+    marginBottom: 16,
   },
 });

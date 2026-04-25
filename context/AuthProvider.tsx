@@ -1,8 +1,8 @@
 import * as SecureStore from "expo-secure-store";
 import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { API_URL } from "../app.env";
-import { useAppDispatch, useAppSelector } from "../store/hooks";
-import { clearCredentials, setCredentials, setHydrated, setLoading, type AuthUser } from "../store/slices/authSlice";
+import { useAppDispatch, useAppSelector } from "../src/store/hooks";
+import { clearCredentials, setCredentials, setHydrated, setLoading, type AuthUser } from "../src/store/slices/authSlice";
 import { useSocket } from "./SocketProvider";
 
 type AuthResult = {
@@ -46,7 +46,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const persistSession = useCallback(async (session: AuthSession | null) => {
     if (!session) {
-      await SecureStore.deleteItemAsync(AUTH_CACHE_KEY).catch(() => {});
+      await SecureStore.deleteItemAsync(AUTH_CACHE_KEY).catch(() => { });
       return;
     }
 
@@ -143,7 +143,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = useCallback(() => {
     dispatch(clearCredentials());
-    persistSession(null).catch(() => {});
+    persistSession(null).catch(() => { });
   }, [dispatch, persistSession]);
 
   const value = useMemo(

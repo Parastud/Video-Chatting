@@ -2,12 +2,12 @@ import * as Notifications from "expo-notifications";
 import { Stack, usePathname, useRouter, type Href } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef } from "react";
-import { Alert } from "react-native";
 import { Provider } from "react-redux";
+import { AlertProvider, useCustomAlert } from "../context/AlertProvider";
 import { AuthProvider, useAuth } from "../context/AuthProvider";
 import { PeerProvider } from "../context/PeerProvider";
 import { SocketProvider, useSocket } from "../context/SocketProvider";
-import { store } from "../store/store";
+import { store } from "../src/store/store";
 
 type IncomingDirectCallPayload = {
   roomId: string;
@@ -30,6 +30,7 @@ function GlobalCallListener() {
   const pathname = usePathname();
   const { on, declineDirectCall } = useSocket();
   const { user, hydrated } = useAuth();
+  const { showAlert } = useCustomAlert();
   const incomingAlertOpenRef = useRef(false);
 
   useEffect(() => {
@@ -70,9 +71,9 @@ function GlobalCallListener() {
           },
         },
         trigger: null,
-      }).catch(() => {});
+      }).catch(() => { });
 
-      Alert.alert(
+      showAlert(
         "Incoming call",
         `${fromUsername || "Someone"} is calling you`,
         [
@@ -82,7 +83,7 @@ function GlobalCallListener() {
             onPress: () => {
               incomingAlertOpenRef.current = false;
               if (fromUserId) {
-                declineDirectCall({ roomId, fromUserId }).catch(() => {});
+                declineDirectCall({ roomId, fromUserId }).catch(() => { });
               }
             },
           },
@@ -122,7 +123,7 @@ function GlobalCallListener() {
       const message = String((payload as { message?: unknown })?.message || "");
       if (!status || !message) return;
       if (status === "ringing" || status === "accepted") return;
-      Alert.alert("Call update", message);
+      showAlert("Call update", message);
     });
 
     return () => {
@@ -130,7 +131,7 @@ function GlobalCallListener() {
       cleanup?.();
       cleanupStatus?.();
     };
-  }, [declineDirectCall, on, pathname, router, user?.username]);
+  }, [declineDirectCall, on, pathname, router, user?.username, showAlert]);
 
   if (!hydrated) {
     return null;
@@ -166,24 +167,25 @@ export default function RootLayout() {
       <SocketProvider>
         <AuthProvider>
           <PeerProvider>
-            <GlobalCallListener />
-            <StatusBar style="light" backgroundColor="#0B0C14" />
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: "#0B0C14" },
-                animation: "fade_from_bottom",
-              }}
-            >
-              <Stack.Screen name="index" />
-              <Stack.Screen name="login" />
-              <Stack.Screen name="register" />
-              <Stack.Screen name="contacts" />
-              <Stack.Screen
-                name="Room/[id]"
-                options={{ animation: "slide_from_right" }}
-              />
-            </Stack>
+            <AlertProvider>
+              <GlobalCallListener />
+              <StatusBar style="light" backgroundColor="#09090B" />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: "#09090B" },
+                  animation: "fade_from_bottom",
+                }}
+              >
+                <Stack.Screen name="index" />
+                <Stack.Screen name="login" />
+                <Stack.Screen name="register" />
+                <Stack.Screen
+                  name="Room/[id]"
+                  options={{ animation: "slide_from_right" }}
+                />
+              </Stack>
+            </AlertProvider>
           </PeerProvider>
         </AuthProvider>
       </SocketProvider>

@@ -1,18 +1,18 @@
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { useAuth } from "../context/AuthProvider";
+import { useCustomAlert } from "../context/AlertProvider";
+import { useAuthSession } from "../src/hooks/useAuthSession";
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -21,7 +21,8 @@ const getErrorMessage = (error: unknown) => {
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login, loading, hydrated, isAuthenticated } = useAuth();
+  const { login, loading, hydrated, isAuthenticated } = useAuthSession();
+  const { showAlert } = useCustomAlert();
 
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
@@ -34,12 +35,12 @@ export default function LoginScreen() {
 
   const handleLogin = useCallback(async () => {
     if (!phone.trim()) {
-      Alert.alert("Error", "Please enter your phone number");
+      showAlert("Error", "Please enter your phone number");
       return;
     }
 
     if (!password) {
-      Alert.alert("Error", "Please enter your password");
+      showAlert("Error", "Please enter your password");
       return;
     }
 
@@ -47,9 +48,9 @@ export default function LoginScreen() {
       await login({ phone, password });
       router.replace("/");
     } catch (error: unknown) {
-      Alert.alert("Login failed", getErrorMessage(error));
+      showAlert("Login failed", getErrorMessage(error));
     }
-  }, [phone, password, login, router]);
+  }, [phone, password, login, router, showAlert]);
 
   if (!hydrated) {
     return <View style={styles.container} />;
@@ -69,18 +70,18 @@ export default function LoginScreen() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.hero}>
-          <Text style={styles.kicker}>Welcome back</Text>
+          <Text style={styles.kicker}>SECURE ACCESS</Text>
           <Text style={styles.title}>Sign In</Text>
-          <Text style={styles.subtitle}>Meet your team in seconds.</Text>
+          <Text style={styles.subtitle}>Welcome back. Connect securely.</Text>
         </View>
 
         <View style={styles.panel}>
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Phone</Text>
+            <Text style={styles.label}>Phone Number</Text>
             <TextInput
               style={styles.input}
               placeholder="+1 555 000 0000"
-              placeholderTextColor="#8EA0B0"
+              placeholderTextColor="#64748B"
               value={phone}
               onChangeText={setPhone}
               editable={!loading}
@@ -93,7 +94,7 @@ export default function LoginScreen() {
             <TextInput
               style={styles.input}
               placeholder="Your password"
-              placeholderTextColor="#8EA0B0"
+              placeholderTextColor="#64748B"
               value={password}
               onChangeText={setPassword}
               secureTextEntry
@@ -107,23 +108,23 @@ export default function LoginScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#0F172A" />
+              <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={styles.submitText}>Continue</Text>
+              <Text style={styles.submitText}>Authenticate</Text>
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.linkWrap} onPress={() => router.push("/register") }>
+          <TouchableOpacity style={styles.linkWrap} onPress={() => router.push("/register")}>
             <Text style={styles.linkText}>
-              New here? <Text style={styles.linkAccent}>Create an account</Text>
+              New here? <Text style={styles.linkAccent}>Create Account</Text>
             </Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.noteCard}>
-          <Text style={styles.noteTitle}>One account, one shareable ID</Text>
+          <Text style={styles.noteTitle}>End-to-End Encrypted</Text>
           <Text style={styles.noteText}>
-            After login, your profile ID can be shared for direct call invitations.
+            Your credentials and calls are secured with industry-standard encryption protocols.
           </Text>
         </View>
       </ScrollView>
@@ -134,126 +135,136 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8FAF9",
+    backgroundColor: "#09090B",
   },
   shapeLeft: {
     position: "absolute",
-    top: -90,
-    left: -70,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "#22C55E1A",
+    top: -100,
+    left: -100,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: "#3B82F6",
+    opacity: 0.15,
   },
   shapeRight: {
     position: "absolute",
-    bottom: -130,
-    right: -80,
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: "#0EA5E91A",
+    bottom: -150,
+    right: -100,
+    width: 350,
+    height: 350,
+    borderRadius: 175,
+    backgroundColor: "#8B5CF6",
+    opacity: 0.15,
   },
   content: {
     flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 36,
+    paddingHorizontal: 24,
+    paddingVertical: 48,
     justifyContent: "center",
   },
   hero: {
-    marginBottom: 24,
+    marginBottom: 32,
     alignItems: "center",
   },
   kicker: {
-    fontSize: 12,
-    color: "#0F766E",
+    fontSize: 11,
+    color: "#38BDF8", // Sky
     textTransform: "uppercase",
-    letterSpacing: 1.3,
-    fontWeight: "700",
+    letterSpacing: 2,
+    fontWeight: "800",
     marginBottom: 8,
   },
   title: {
     fontSize: 42,
-    color: "#1D2939",
-    fontFamily: Platform.OS === "ios" ? "Times New Roman" : "serif",
-    marginBottom: 4,
+    color: "#F8FAFC",
+    fontFamily: Platform.OS === "ios" ? "Helvetica Neue" : "sans-serif",
+    fontWeight: "800",
+    marginBottom: 8,
+    letterSpacing: -1,
   },
   subtitle: {
-    color: "#51667A",
-    fontSize: 14,
+    color: "#94A3B8",
+    fontSize: 15,
   },
   panel: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
+    backgroundColor: "rgba(20, 20, 24, 0.6)",
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#DCE3EA",
-    padding: 18,
-    gap: 12,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    padding: 24,
+    gap: 16,
   },
   inputGroup: {
-    gap: 6,
+    gap: 8,
   },
   label: {
-    color: "#3C556E",
+    color: "#94A3B8",
     fontWeight: "700",
     fontSize: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   input: {
-    backgroundColor: "#F6F8FB",
+    backgroundColor: "rgba(0, 0, 0, 0.3)",
     borderWidth: 1,
-    borderColor: "#D8E2EB",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    color: "#11263A",
-    fontSize: 15,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: "#F8FAFC",
+    fontSize: 16,
   },
   submitButton: {
-    marginTop: 8,
-    borderRadius: 12,
-    paddingVertical: 13,
+    marginTop: 12,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: "center",
-    backgroundColor: "#FDE68A",
-    borderWidth: 1,
-    borderColor: "#F4D06F",
+    backgroundColor: "#6366F1", // Indigo
+    shadowColor: "#6366F1",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   submitButtonDisabled: {
-    opacity: 0.65,
+    opacity: 0.6,
   },
   submitText: {
-    color: "#111827",
+    color: "#FFFFFF",
     fontWeight: "800",
-    fontSize: 15,
+    fontSize: 16,
+    letterSpacing: 0.5,
   },
   linkWrap: {
-    paddingTop: 4,
+    paddingTop: 8,
     alignItems: "center",
   },
   linkText: {
-    color: "#607489",
-    fontSize: 13,
+    color: "#94A3B8",
+    fontSize: 14,
   },
   linkAccent: {
-    color: "#0E7490",
-    fontWeight: "800",
+    color: "#38BDF8",
+    fontWeight: "700",
   },
   noteCard: {
-    marginTop: 16,
-    backgroundColor: "#E8F5EF",
+    marginTop: 24,
+    backgroundColor: "rgba(56, 189, 248, 0.05)",
     borderWidth: 1,
-    borderColor: "#B7E4D0",
-    borderRadius: 14,
-    padding: 14,
+    borderColor: "rgba(56, 189, 248, 0.15)",
+    borderRadius: 16,
+    padding: 16,
   },
   noteTitle: {
     fontSize: 13,
     fontWeight: "800",
-    color: "#0F766E",
-    marginBottom: 4,
+    color: "#38BDF8",
+    marginBottom: 6,
   },
   noteText: {
-    fontSize: 12,
-    color: "#35566B",
-    lineHeight: 18,
+    fontSize: 13,
+    color: "#94A3B8",
+    lineHeight: 20,
   },
 });
