@@ -3,10 +3,10 @@ import { Stack, usePathname, useRouter, type Href } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef } from "react";
 import { Provider } from "react-redux";
-import { AlertProvider, useCustomAlert } from "../context/AlertProvider";
-import { AuthProvider, useAuth } from "../context/AuthProvider";
-import { PeerProvider } from "../context/PeerProvider";
-import { SocketProvider, useSocket } from "../context/SocketProvider";
+import { AlertHost } from "../src/components/AlertHost";
+import { useAuthSession } from "../src/hooks/useAuthSession";
+import { useCustomAlert } from "../src/hooks/useCustomAlert";
+import { useSocket, useInitializeSocket } from "../src/hooks/useSocket";
 import { store } from "../src/store/store";
 
 type IncomingDirectCallPayload = {
@@ -29,7 +29,7 @@ function GlobalCallListener() {
   const router = useRouter();
   const pathname = usePathname();
   const { on, declineDirectCall } = useSocket();
-  const { user, hydrated } = useAuth();
+  const { user, hydrated } = useAuthSession();
   const { showAlert } = useCustomAlert();
   const incomingAlertOpenRef = useRef(false);
 
@@ -140,6 +140,11 @@ function GlobalCallListener() {
   return null;
 }
 
+function GlobalRuntime() {
+  useInitializeSocket();
+  return null;
+}
+
 export default function RootLayout() {
   const router = useRouter();
 
@@ -164,31 +169,25 @@ export default function RootLayout() {
 
   return (
     <Provider store={store}>
-      <SocketProvider>
-        <AuthProvider>
-          <PeerProvider>
-            <AlertProvider>
-              <GlobalCallListener />
-              <StatusBar style="light" backgroundColor="#09090B" />
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: "#09090B" },
-                  animation: "fade_from_bottom",
-                }}
-              >
-                <Stack.Screen name="index" />
-                <Stack.Screen name="login" />
-                <Stack.Screen name="register" />
-                <Stack.Screen
-                  name="Room/[id]"
-                  options={{ animation: "slide_from_right" }}
-                />
-              </Stack>
-            </AlertProvider>
-          </PeerProvider>
-        </AuthProvider>
-      </SocketProvider>
+      <GlobalRuntime />
+      <GlobalCallListener />
+      <AlertHost />
+      <StatusBar style="light" backgroundColor="#09090B" />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: "#09090B" },
+          animation: "fade_from_bottom",
+        }}
+      >
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" />
+        <Stack.Screen name="register" />
+        <Stack.Screen
+          name="Room/[id]"
+          options={{ animation: "slide_from_right" }}
+        />
+      </Stack>
     </Provider>
   );
 }

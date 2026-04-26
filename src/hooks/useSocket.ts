@@ -1,8 +1,8 @@
-import { useCallback, useEffect, type ReactNode } from "react";
+import { useCallback, useEffect } from "react";
 import { io, type Socket } from "socket.io-client";
-import { API_URL } from "../app.env";
-import { useAppDispatch, useAppSelector } from "../src/store/hooks";
-import { setSocketConnected } from "../src/store/slices/socketSlice";
+import { API_URL } from "../../app.env";
+import { useAppDispatch, useAppSelector } from "../store/store";
+import { setSocketConnected } from "../store/slices/socketSlice";
 
 type SocketAck = {
   success: boolean;
@@ -125,17 +125,13 @@ const initializeSocket = (dispatch: ReturnType<typeof useAppDispatch>) => {
   });
 };
 
-export const SocketBootstrap = ({ children }: { children: ReactNode }) => {
+export const useInitializeSocket = () => {
   const dispatch = useAppDispatch();
 
   useEffect(() => {
     initializeSocket(dispatch);
   }, [dispatch]);
-
-  return <>{children}</>;
 };
-
-export const SocketProvider = SocketBootstrap;
 
 export const useSocket = () => {
   const isConnected = useAppSelector((state) => state.socket.isConnected);

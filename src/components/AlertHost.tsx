@@ -1,5 +1,5 @@
 import { BlurView } from "expo-blur";
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   Animated,
   Modal,
@@ -9,53 +9,11 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
-import { useAppDispatch, useAppSelector } from "../src/store/hooks";
-import { closeAlert as closeAlertAction, openAlert } from "../src/store/slices/alertSlice";
+import { useAppDispatch, useAppSelector } from "../store/store";
+import { closeAlert as closeAlertAction } from "../store/slices/alertSlice";
+import { alertHandlers } from "../hooks/useCustomAlert";
 
-export type CustomAlertButton = {
-  text?: string;
-  onPress?: () => void;
-  style?: "default" | "cancel" | "destructive";
-};
-
-export type CustomAlertOptions = {
-  cancelable?: boolean;
-  onDismiss?: () => void;
-};
-
-let currentButtonCallbacks: (((() => void) | undefined))[] = [];
-let currentOnDismiss: (() => void) | undefined;
-
-export function useCustomAlert() {
-  const dispatch = useAppDispatch();
-
-  const showAlert = useCallback(
-    (
-      title: string,
-      message?: string,
-      buttons?: CustomAlertButton[],
-      options?: CustomAlertOptions
-    ) => {
-      const safeButtons = buttons && buttons.length > 0 ? buttons : [{ text: "OK" }];
-      currentButtonCallbacks = safeButtons.map((button) => button.onPress);
-      currentOnDismiss = options?.onDismiss;
-
-      dispatch(
-        openAlert({
-          title,
-          message,
-          buttons: safeButtons.map((button) => ({ text: button.text, style: button.style })),
-          cancelable: options?.cancelable,
-        })
-      );
-    },
-    [dispatch]
-  );
-
-  return { showAlert };
-}
-
-export const AlertHost = ({ children }: { children: ReactNode }) => {
+export const AlertHost = () => {
   const dispatch = useAppDispatch();
   const { visible, title, message, buttons, cancelable } = useAppSelector((state) => state.alert);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -77,7 +35,7 @@ export const AlertHost = ({ children }: { children: ReactNode }) => {
       ]).start(() => {
         dispatch(closeAlertAction());
         if (onClose) onClose();
-        if (currentOnDismiss) currentOnDismiss();
+        if (alertHandlers.currentOnDismiss) alertHandlers.currentOnDismiss();
       });
     },
     [dispatch, fadeAnim, scaleAnim]
@@ -109,7 +67,6 @@ export const AlertHost = ({ children }: { children: ReactNode }) => {
 
   return (
     <>
-      {children}
       <Modal transparent visible={visible} animationType="none" onRequestClose={handleBackdropPress}>
         <TouchableWithoutFeedback onPress={handleBackdropPress}>
           <Animated.View style={[styles.backdrop, { opacity: fadeAnim }]}>
@@ -139,7 +96,7 @@ export const AlertHost = ({ children }: { children: ReactNode }) => {
                           index > 0 && buttons.length <= 2 ? styles.buttonHorizontalRight : null,
                           index > 0 && buttons.length > 2 ? styles.buttonVerticalBottom : null,
                         ]}
-                        onPress={() => closeAlert(currentButtonCallbacks[index])}
+                        onPress={() => closeAlert(alertHandlers.currentButtonCallbacks[index])}
                       >
                         <Text
                           style={[
@@ -162,8 +119,6 @@ export const AlertHost = ({ children }: { children: ReactNode }) => {
     </>
   );
 };
-
-export const AlertProvider = AlertHost;
 
 const styles = StyleSheet.create({
   backdrop: {

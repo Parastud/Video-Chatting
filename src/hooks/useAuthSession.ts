@@ -1,9 +1,9 @@
 import * as SecureStore from "expo-secure-store";
 import { useCallback, useEffect } from "react";
-import { useSocket } from "../../context/SocketProvider";
-import { useLoginMutation, useRegisterMutation } from "../store/api/authApi";
-import { useAppDispatch, useAppSelector } from "../store/hooks";
+import { loginUserService, registerUserService } from "../services";
 import { clearCredentials, setCredentials, setHydrated, setLoading, type AuthUser } from "../store/slices/authSlice";
+import { useSocket } from "./useSocket";
+import { useAppDispatch, useAppSelector } from "../store/store";
 
 const AUTH_CACHE_KEY = "video-chat-auth-session";
 
@@ -20,15 +20,13 @@ type AuthResult = {
 };
 
 const toApiError = (error: unknown, fallback: string) => {
-  const data = (error as { data?: { error?: string; message?: string } })?.data;
+  const data = (error as { response?: { data?: { error?: string; message?: string } } })?.response?.data;
   return data?.error || data?.message || fallback;
 };
 
 export const useAuthSession = () => {
   const dispatch = useAppDispatch();
   const { identifySocket } = useSocket();
-  const [loginMutation] = useLoginMutation();
-  const [registerMutation] = useRegisterMutation();
   const { user, token, loading, hydrated } = useAppSelector((state) => state.auth);
 
   const persistSession = useCallback(async (session: AuthSession | null) => {
@@ -65,7 +63,7 @@ export const useAuthSession = () => {
     async (payload: { phone: string; password: string }): Promise<AuthResult> => {
       dispatch(setLoading(true));
       try {
-        const data = await loginMutation(payload).unwrap();
+        const data = await loginUserService(payload);
         const nextUser = {
           id: data.user.id,
           username: data.user.username,
@@ -88,14 +86,14 @@ export const useAuthSession = () => {
         dispatch(setLoading(false));
       }
     },
-    [dispatch, identifySocket, loginMutation, persistSession]
+    [dispatch, identifySocket, persistSession]
   );
 
   const register = useCallback(
     async (payload: { phone: string; username: string; password: string }): Promise<AuthResult> => {
       dispatch(setLoading(true));
       try {
-        const data = await registerMutation(payload).unwrap();
+        const data = await registerUserService(payload);
         const nextUser = {
           id: data.user.id,
           username: data.user.username,
@@ -118,7 +116,7 @@ export const useAuthSession = () => {
         dispatch(setLoading(false));
       }
     },
-    [dispatch, identifySocket, persistSession, registerMutation]
+    [dispatch, identifySocket, persistSession]
   );
 
   const logout = useCallback(() => {

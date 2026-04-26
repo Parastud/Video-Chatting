@@ -11,11 +11,12 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useCustomAlert } from "../context/AlertProvider";
-import { useSocket } from "../context/SocketProvider";
+import { useCustomAlert } from "../src/hooks/useCustomAlert";
+import { useContactsApi } from "../src/hooks/useContactsApi";
+import { useSocket } from "../src/hooks/useSocket";
 import { useAuthSession } from "../src/hooks/useAuthSession";
-import { useAddContactMutation, useGetContactsQuery, useLazySearchUsersQuery, type ContactUser } from "../src/store/api/contactsApi";
-import { useAppDispatch, useAppSelector } from "../src/store/hooks";
+import type { ContactUser } from "../src/services";
+import { useAppDispatch, useAppSelector } from "../src/store/store";
 import { setContactsTab } from "../src/store/slices/uiSlice";
 
 type AppUser = ContactUser;
@@ -74,14 +75,9 @@ export default function HomeScreen() {
   const { isAuthenticated, user: currentUser, hydrated } = useAuthSession();
   const { callUser } = useSocket();
   const { showAlert } = useCustomAlert();
+  const { contacts, loadingSearch, fetchContacts, searchUsers, addContact } = useContactsApi();
   const dispatch = useAppDispatch();
   const activeTab = useAppSelector((state) => state.ui.contactsTab);
-  const { data: contacts = [], refetch } = useGetContactsQuery(undefined, {
-    skip: !currentUser?.id,
-    pollingInterval: 5000,
-  });
-  const [triggerSearch, { isFetching: loadingSearch }] = useLazySearchUsersQuery();
-  const [addContact] = useAddContactMutation();
 
   const [searchResults, setSearchResults] = useState<AppUser[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -102,13 +98,13 @@ export default function HomeScreen() {
       }
 
       try {
-        const data = await triggerSearch(text).unwrap();
+        const data = await searchUsers(text);
         setSearchResults((data || []).filter((item) => item.id !== currentUser?.id));
       } catch (error: unknown) {
         console.warn("[Contacts] search failed:", getErrorMessage(error));
       }
     },
-    [currentUser?.id, triggerSearch]
+    [currentUser?.id, searchUsers]
   );
 
   const handleCall = useCallback(
@@ -165,7 +161,11 @@ export default function HomeScreen() {
       if (!currentUser?.id) return;
 
       try {
-        await addContact({ contactUserId: targetUser.id }).unwrap();
+        const response = await addContact({ contactUserId: targetUser.id });
+        if (!response.success) {
+          showAlert("Add failed", String(response.error || "Unable to add contact"));
+          return;
+        }
         setSearchResults((prev) => prev.filter((item) => item.id !== targetUser.id));
         showAlert("Added", `${targetUser.username} is now in your contacts`);
       } catch (error: unknown) {
@@ -177,9 +177,9 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refetch();
+    await fetchContacts();
     setRefreshing(false);
-  }, [refetch]);
+  }, [fetchContacts]);
 
   if (!hydrated) {
     return (

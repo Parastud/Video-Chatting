@@ -17,6 +17,7 @@
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
     "@reduxjs/toolkit": "^2.11.2",
+    "axios": "^1.15.2",
     "expo": "^55.0.17",
     "expo-av": "~15.1.6",
     "expo-blur": "~55.0.14",

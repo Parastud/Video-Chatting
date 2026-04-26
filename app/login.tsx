@@ -11,8 +11,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useCustomAlert } from "../context/AlertProvider";
 import { useAuthSession } from "../src/hooks/useAuthSession";
+import { useCustomAlert } from "../src/hooks/useCustomAlert";
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;

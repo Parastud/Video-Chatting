@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   MediaStream,
   MediaStreamTrack,
@@ -6,8 +6,8 @@ import {
   RTCPeerConnection,
   RTCSessionDescription,
 } from "react-native-webrtc";
-import { useAppDispatch, useAppSelector } from "../src/store/hooks";
-import { resetPeerState, setPeerCallState, setPeerRemoteMediaState, type PeerCallState } from "../src/store/slices/peerSlice";
+import { resetPeerState, setPeerCallState, setPeerRemoteMediaState, type PeerCallState } from "../store/slices/peerSlice";
+import { useAppDispatch, useAppSelector } from "../store/store";
 
 type SessionDescriptionLike = {
   type: "offer" | "answer" | "pranswer" | "rollback";
@@ -82,18 +82,6 @@ const toSessionDescription = (value: unknown): SessionDescriptionLike | null => 
     sdp: candidate.sdp,
   };
 };
-
-export const PeerBootstrap = ({ children }: { children: ReactNode }) => {
-  const dispatch = useAppDispatch();
-
-  useEffect(() => {
-    dispatchRef = dispatch;
-  }, [dispatch]);
-
-  return <>{children}</>;
-};
-
-export const PeerProvider = PeerBootstrap;
 
 export const usePeer = (): PeerContextValue => {
   const dispatch = useAppDispatch();

@@ -11,18 +11,18 @@ import {
   View
 } from "react-native";
 import { type MediaStream } from "react-native-webrtc";
-import { useCustomAlert } from "../../context/AlertProvider";
-import { usePeer } from "../../context/PeerProvider";
-import { useSocket } from "../../context/SocketProvider";
 import { CallControls } from "../../src/components/CallControls";
 import { LocalPip } from "../../src/components/LocalPip";
 import { RemoteStage } from "../../src/components/RemoteStage";
 import { useAuthSession } from "../../src/hooks/useAuthSession";
 import { useCallStatusNotification } from "../../src/hooks/useCallStatusNotification";
 import { useControlsAutoHide } from "../../src/hooks/useControlsAutoHide";
+import { useCustomAlert } from "../../src/hooks/useCustomAlert";
 import { useMediaStateSync } from "../../src/hooks/useMediaStateSync";
+import { usePeer } from "../../src/hooks/usePeer";
 import { usePipLifecycle } from "../../src/hooks/usePipLifecycle";
 import { useRoomAudioRouting } from "../../src/hooks/useRoomAudioRouting";
+import { useSocket } from "../../src/hooks/useSocket";
 import { useServerTimer } from "../../src/hooks/useServerTimer";
 import { styles } from "../../src/styles/roomStyles";
 import type { RoomConnectionStatus, RoomEventPayload, RoomSearchParams } from "../../src/types/room.types";

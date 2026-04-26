@@ -1,6 +1,6 @@
 import { PermissionsAndroid, Platform } from "react-native";
 import { mediaDevices } from "react-native-webrtc";
-import type { RoomConnectionStatus } from "./room.types";
+import type { RoomConnectionStatus } from "../types/room.types";
 
 export const toSingleValue = (value: string | string[] | undefined) => {
   if (Array.isArray(value)) return value[0] ?? "";
