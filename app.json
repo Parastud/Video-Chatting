@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "com.parastud.facechat",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.parastud.facechat",
@@ -26,7 +25,6 @@
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
       "package": "com.parastud.facechat"
     },
     "web": {
