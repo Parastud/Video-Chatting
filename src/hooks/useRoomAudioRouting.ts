@@ -1,9 +1,9 @@
-import { Audio } from "expo-av";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import InCallManager from "react-native-incall-manager";
 import { mediaDevices } from "react-native-webrtc";
 import type { AudioRoute } from "../types/room.types";
+import { setAudioModeAsync } from 'expo-audio'
 
 type ShowAlert = (
   title: string,
@@ -88,7 +88,7 @@ export const useRoomAudioRouting = ({ callState, appState, showAlert }: Params) 
         }
       };
 
-      await Audio.setAudioModeAsync({
+      await setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
         staysActiveInBackground: true,

@@ -1,8 +1,0 @@
-node_modules
-.git
-.expo
-.vscode
-test
-__tests__
-coverage
-android

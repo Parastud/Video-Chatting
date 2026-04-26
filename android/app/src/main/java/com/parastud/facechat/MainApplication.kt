@@ -21,14 +21,19 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here
+          // Packages that cannot be autolinked yet can be added manually here, for example:
+          // add(MyReactNativePackage())
         }
     )
   }
 
   override fun onCreate() {
     super.onCreate()
-    DefaultNewArchitectureEntryPoint.releaseLevel = ReleaseLevel.STABLE
+    DefaultNewArchitectureEntryPoint.releaseLevel = try {
+      ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
+    } catch (e: IllegalArgumentException) {
+      ReleaseLevel.STABLE
+    }
     loadReactNative(this)
     ApplicationLifecycleDispatcher.onApplicationCreate(this)
   }
