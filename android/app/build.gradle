@@ -92,8 +92,8 @@ android {
         applicationId 'com.parastud.facechat'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.1"
+        versionCode 3
+        versionName "1.0.2"
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"stable\""
 
     }

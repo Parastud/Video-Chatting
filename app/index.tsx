@@ -1,5 +1,5 @@
 import { Redirect, useRouter, type Href } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -11,13 +11,13 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useCustomAlert } from "../src/hooks/useCustomAlert";
-import { useContactsApi } from "../src/hooks/useContactsApi";
-import { useSocket } from "../src/hooks/useSocket";
 import { useAuthSession } from "../src/hooks/useAuthSession";
+import { useContactsApi } from "../src/hooks/useContactsApi";
+import { useCustomAlert } from "../src/hooks/useCustomAlert";
+import { useSocket } from "../src/hooks/useSocket";
 import type { ContactUser } from "../src/services";
-import { useAppDispatch, useAppSelector } from "../src/store/store";
 import { setContactsTab } from "../src/store/slices/uiSlice";
+import { useAppDispatch, useAppSelector } from "../src/store/store";
 
 type AppUser = ContactUser;
 
@@ -36,10 +36,14 @@ const UserCard = ({
   item,
   onCall,
   showMeta,
+  onAddContact,
+  activeTab,
 }: {
   item: AppUser;
   onCall: (user: AppUser) => void;
   showMeta?: boolean;
+  onAddContact: (user: AppUser) => void;
+  activeTab: string;
 }) => {
   const online = item.status === "online";
   const busy = item.status === "busy";
@@ -58,14 +62,21 @@ const UserCard = ({
         </Text>
         {showMeta ? <Text style={styles.userId}>{item.id}</Text> : null}
       </View>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}> 
+      {activeTab === "search" ? (
+        <TouchableOpacity style={styles.addButton} onPress={() => onAddContact(item)}>
+          <Text style={styles.addButtonText}>Add</Text>
+        </TouchableOpacity>
+      ) : null}
 
       <TouchableOpacity
         style={[styles.callButton, !callable && styles.callButtonDisabled]}
         disabled={!callable}
         onPress={() => onCall(item)}
-      >
+        >
         <Text style={styles.callButtonText}>Call</Text>
       </TouchableOpacity>
+      </View>
     </View>
   );
 };
@@ -267,12 +278,7 @@ export default function HomeScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#38BDF8" />}
           renderItem={({ item }) => (
             <View style={styles.listItemWrap}>
-              <UserCard item={item} onCall={handleCall} showMeta={activeTab === "contacts"} />
-              {activeTab === "search" ? (
-                <TouchableOpacity style={styles.addButton} onPress={() => handleAddContact(item)}>
-                  <Text style={styles.addButtonText}>Add</Text>
-                </TouchableOpacity>
-              ) : null}
+              <UserCard item={item} onCall={handleCall} showMeta={activeTab === "contacts"} onAddContact={handleAddContact} activeTab={activeTab} />
             </View>
           )}
         />
@@ -522,9 +528,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   addButton: {
-    position: "absolute",
-    right: 16,
-    top: 16,
     backgroundColor: "rgba(16, 185, 129, 0.15)",
     borderWidth: 1,
     borderColor: "rgba(16, 185, 129, 0.3)",
