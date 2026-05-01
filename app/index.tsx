@@ -68,7 +68,7 @@ const UserCard = ({
           <Text style={styles.addButtonText}>Add</Text>
         </TouchableOpacity>
       ) : null}
-
+    
       <TouchableOpacity
         style={[styles.callButton, !callable && styles.callButtonDisabled]}
         disabled={!callable}
